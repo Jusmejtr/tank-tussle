@@ -348,6 +348,14 @@
     return [(nx[0] + 0.5) * C.CELL, (nx[1] + 0.5) * C.CELL];
   }
 
+  function moveTank(t, rot, mv, dt, rects) {
+    t.a += rot * C.TANK_ROT * dt;
+    if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
+    const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
+    t.x += Math.cos(t.a) * mv * sp * dt; t.y += Math.sin(t.a) * mv * sp * dt;
+    pushCircleOut(t, C.TANK_R, rects);
+  }
+
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
@@ -361,11 +369,7 @@
       if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }
       if (t.weapon === 'deathray' && t.charge > 0) mv = 0; // locked in place while charging (can still aim)
       t.px = t.x; t.py = t.y;
-      t.a += rot * C.TANK_ROT * dt;
-      if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
-      const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
-      t.x += Math.cos(t.a) * mv * sp * dt; t.y += Math.sin(t.a) * mv * sp * dt;
-      pushCircleOut(t, C.TANK_R, g.rects);
+      moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;
       const pressed = k.f && !t.fireHeld;
       if (t.weapon) useWeapon(g, t, k, pressed, dt);
@@ -469,7 +473,7 @@
   function snapshot(g) {
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
-      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100]),
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0]),
       b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
@@ -478,5 +482,5 @@
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
