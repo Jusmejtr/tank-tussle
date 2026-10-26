@@ -223,7 +223,7 @@ function onlineInput() {
   tapped.clear();
   if (s !== net.lastSent || now - net.lastSentAt > 250) { net.send({ t: 'input', k }); net.lastSent = s; net.lastSentAt = now; }
 }
-const INTERP_DELAY = 90;
+const INTERP_DELAY = 50;
 function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
 function onlineView() {
   if (!net.maze || !net.snaps.length) return null;
