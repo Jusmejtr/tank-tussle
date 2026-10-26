@@ -424,6 +424,8 @@
     return k;
   }
 
+  // keys are booleans (humans) or 0..1 analog values (bots)
+  const axis = v => v === true ? 1 : v > 0 ? Math.min(1, +v) : 0;
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
@@ -431,7 +433,7 @@
     for (const t of tanks) {
       if (!t.alive) continue;
       const k = inputs[t.id] || {};
-      let rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = (k.u ? 1 : 0) - (k.d ? 1 : 0);
+      let rot = axis(k.r) - axis(k.l), mv = axis(k.u) - axis(k.d);
       const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
       if (rc) { rc.steer = rot; rot = 0; mv = 0; }
       if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }

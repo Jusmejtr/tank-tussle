@@ -90,7 +90,8 @@
       for (const o of Object.values(g.tanks)) if (isEnemy(g, t, o)) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
       if (tgt) {
         const [wx, wy] = TT.nextWaypoint(g, rc.x, rc.y, tgt.x, tgt.y), d = wrap(Math.atan2(wy - rc.y, wx - rc.x) - Math.atan2(rc.vy, rc.vx));
-        if (d > 0.08) k.r = true; else if (d < -0.08) k.l = true;
+        const s = Math.max(-1, Math.min(1, d / 0.35));
+        if (s > 0.02) k.r = s; else if (s < -0.02) k.l = -s;
       }
       return finish();
     }
@@ -153,7 +154,7 @@
     const plan = br.plan; if (!plan) return k;
     // ---- continuous steering ----
     let wantA = null, drive = 0;
-    if (br.reverseT > 0) { k.d = true; (br.turnDir > 0 ? (k.r = true) : (k.l = true)); return finish(); }
+    if (br.reverseT > 0) { k.d = true; (br.turnDir > 0 ? (k.r = true) : (k.l = true)); br.thr = 0; return finish(); }
     if (plan.dodge) { wantA = plan.dodge.angle; drive = plan.dodge.back ? -1 : 1; }
     else if (plan.aim != null) { wantA = plan.aim; drive = plan.move ? 1 : 0; }
     else if (plan.goal) {
@@ -162,20 +163,21 @@
       if (c0 !== gc || r0 !== gr) {
         if (!br.field || br.fieldCell !== r0 * m.cols + c0 || br.fieldRound !== g.round) { br.field = bfs(m, c0, r0); br.fieldCell = r0 * m.cols + c0; br.fieldRound = g.round; }
         const nk = firstStep(m, br.field, r0 * m.cols + c0, gr * m.cols + gc), nc = nk % m.cols, nr = (nk / m.cols) | 0;
-        const ccx = (c0 + 0.5) * C.CELL, ccy = (r0 + 0.5) * C.CELL;
-        wx = (nc + 0.5) * C.CELL; wy = (nr + 0.5) * C.CELL;
-        // line up with the corridor before turning through a gap
-        if (nc !== c0 && Math.abs(t.y - ccy) > 10) { wx = ccx; wy = ccy; }
-        if (nr !== r0 && Math.abs(t.x - ccx) > 10) { wx = ccx; wy = ccy; }
+        const ncx = (nc + 0.5) * C.CELL, ncy = (nr + 0.5) * C.CELL, LOOK = 38;
+        // pure pursuit: chase a point sliding along the corridor centre line -> smooth arcs through gaps
+        if (nc !== c0) { wy = ncy; wx = nc > c0 ? Math.min(ncx, t.x + LOOK) : Math.max(ncx, t.x - LOOK); }
+        else { wx = ncx; wy = nr > r0 ? Math.min(ncy, t.y + LOOK) : Math.max(ncy, t.y - LOOK); }
       }
       wantA = Math.atan2(wy - t.y, wx - t.x); drive = 1;
     }
+    let thr = 0;
     if (wantA != null) {
-      const d = wrap(wantA - t.a);
-      if (d > 0.06) k.r = true; else if (d < -0.06) k.l = true;
-      if (drive > 0 && Math.abs(d) < 0.6) k.u = true;
-      if (drive < 0 && Math.abs(d) < 0.6) k.d = true;
+      const d = wrap(wantA - t.a), s = Math.max(-1, Math.min(1, d / 0.3)); // proportional turn: eases in, no left/right jitter
+      if (s > 0.01) k.r = s; else if (s < -0.01) k.l = -s;
+      thr = drive * Math.max(0, Math.cos(Math.min(Math.PI / 2, Math.abs(d) * 1.4))); // slow down while turning instead of stop/go
     }
+    br.thr = (br.thr || 0) + (thr - (br.thr || 0)) * Math.min(1, dt * 10);
+    if (br.thr > 0.02) k.u = br.thr; else if (br.thr < -0.02) k.d = -br.thr;
     // fire (needs a fresh press each time, except gatling which is held)
     if (plan.fire && br.cool <= 0) {
       if (t.weapon === 'gatling') k.f = true;

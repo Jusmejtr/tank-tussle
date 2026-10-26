@@ -21,6 +21,8 @@ const REACT_KEYS = [
   ['Numpad7', 'Numpad9', 'Numpad1', 'Numpad2', 'Numpad3', 'NumpadDecimal'],
 ];
 const REACT_LABELS = ['1–6', '7 8 9 0 - =', 'Z X C V B N', 'Num 7 9 1 2 3 .'];
+const SOLO = { name: 'Red', keys: ONLINE_KEYS, label: ['↑', '←', '↓', '→', 'Space'] };
+const keySets = n => n === 1 ? [SOLO] : LOCAL;
 const GAME_CODES = new Set([...LOCAL.map(s => Object.values(s.keys)), ...Object.values(ONLINE_KEYS)].flat(2));
 
 const down = new Set(), tapped = new Set();
@@ -52,7 +54,7 @@ const STICK_MODES = ['tank', 'point'];
 let stickModes = (() => { try { const v = JSON.parse(localStorage.getItem('tt-stick')); if (Array.isArray(v)) return [0, 1].map(i => STICK_MODES.includes(v[i]) ? v[i] : 'tank'); } catch {} return ['tank', 'tank']; })();
 const saveStickModes = () => { try { localStorage.setItem('tt-stick', JSON.stringify(stickModes)); } catch {} };
 function keysHtml(n) {
-  return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
+  return keySets(n).slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
     + (n ? `<div>Reactions ${TT.REACTIONS.join('')}: ${REACT_LABELS.slice(0, n).map((l, i) => `${n > 1 ? 'P' + (i + 1) + ' ' : ''}<kbd>${l}</kbd>`).join(' · ')}</div>` : '')
     + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '')
     + (nBots ? `<div><span class="dot" style="background:${COLORS[n]}"></span><b>${nBots} bot${nBots > 1 ? 's' : ''}</b> (${botLevel}) — colours ${COLOR_NAMES_FOR(n, nBots)}</div>` : '')
@@ -140,7 +142,6 @@ document.querySelectorAll('#modeRow button[data-m]').forEach(b => b.onclick = ()
 $('switchTeam').onclick = () => net && net.send({ t: 'setTeam' });
 $('plist').addEventListener('click', e => { const b = e.target.closest('[data-team-id]'); if (b && net) net.send({ t: 'setTeam', id: +b.dataset.teamId }); });
 document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
-if ($('server')) { $('server').value = new URLSearchParams(location.search).get('server') || window.TT_SERVER_URL || (/^https?:$/.test(location.protocol) && !window.TT_STATIC ? '' : localStorage.getItem('tt-server') || ''); }
 
 function togglePause(on) {
   if (on === undefined) on = $('pause').classList.contains('hidden');
@@ -181,10 +182,10 @@ function localTick(dt) {
   if (paused) return;
   acc = Math.min(acc + dt, 0.25);
   while (acc >= 1 / 60) {
-    const inputs = {};
+    const inputs = {}, sets = keySets(game.players.filter(p => !p.bot).length);
     game.players.forEach((p, i) => {
       if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
-      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i], game.tanks[p.id] && game.tanks[p.id].a, 1 / 60)); inputs[p.id] = k;
+      let k = readKeys(sets[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i], game.tanks[p.id] && game.tanks[p.id].a, 1 / 60)); inputs[p.id] = k;
     });
     TT.step(game, inputs, 1 / 60); tapped.clear();
     handleEvents(game.events.splice(0), id => game.tanks[id]);
@@ -193,24 +194,22 @@ function localTick(dt) {
 }
 
 // ---------- online ----------
-// Server URL: ?server=... > window.TT_SERVER_URL (config.js) > same origin (when served by server.js) > last used
+// Server: window.TT_SERVER_URL (config.js), else same origin (when served by server.js)
 function serverBase() {
-  const q = new URLSearchParams(location.search).get('server') || ($('server') && $('server').value.trim());
-  let s = q || window.TT_SERVER_URL || '';
+  let s = window.TT_SERVER_URL || '';
   if (!s && /^https?:$/.test(location.protocol) && !window.TT_STATIC) s = location.origin;
-  if (!s) s = localStorage.getItem('tt-server') || '';
   if (s && !/^(https?|wss?):\/\//.test(s)) s = 'https://' + s;
   return s.replace(/\/+$/, '');
 }
 const wsUrlOf = base => (/^wss?:/.test(base) ? base : base.replace(/^http/, 'ws')).replace(/\/ws$/, '') + '/ws';
 function shareLink(code) {
-  const base = serverBase(), sameOrigin = /^https?:$/.test(location.protocol) && base === location.origin;
-  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname + '?room=' + code + (sameOrigin || base === (window.TT_SERVER_URL || '').replace(/\/+$/, '') ? '' : '&server=' + encodeURIComponent(base));
+  const base = serverBase();
+  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname + '?room=' + code;
   return base.replace(/^ws/, 'http') + '/?room=' + code; // standalone file: link to the client the server hosts
 }
 function connect(first) {
   const base = serverBase();
-  if (!base) return ($('err').textContent = 'No game server set. Run "npm start" and open http://localhost:8090, or enter a server URL above.');
+  if (!base) return ($('err').textContent = 'No game server set. Run "npm start" and open http://localhost:8090, or set TT_SERVER_URL in config.js.');
   audioInit();
   const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
   $('err').textContent = 'Connecting…';
@@ -242,8 +241,7 @@ function openSocket(me, firstMsg) {
     if (m.t === 'joined') {
       const re = !!me.token;
       me.you = m.you; me.code = m.code; me.token = m.token; mode = 'online'; $('err').textContent = '';
-      localStorage.setItem('tt-server', me.base);
-      history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
+      history.replaceState(null, '', '?room=' + m.code);
       show('menu', false); show('menuBtn', true); if (!re) { setupTouch(isTouch ? 'online' : null); bubbles.clear(); setupReact('online'); } else flash('Reconnected!');
     } else if (m.t === 'lobby') {
       me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
@@ -817,7 +815,7 @@ function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
     teams: game.mode === 'teams', teamScore: game.teamScore,
-    legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
+    legend: game.players.map((p, i, a, s = keySets(a.filter(x => !x.bot).length)[i]) => p.bot ? p.name : `${s.label.slice(0, 4).join(' ')} + ${s.label[4]}`) };
 }
 
 // ---------- main loop ----------

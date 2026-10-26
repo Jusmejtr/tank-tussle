@@ -165,8 +165,7 @@ window.TT_STATIC = true;
 window.TT_SERVER_URL = 'https://tank.example.com';   // https -> client uses wss://<host>/ws
 ```
 
-Commit and push; Pages serves it. Alternatives without editing: open the page with `?server=https://tank.example.com`
-(share links created on such a page carry the `&server=` parameter), or type it into the *Server URL* field on the title screen.
+Commit and push; Pages serves it.
 CORS: WebSockets accept any origin and `/health` sends `Access-Control-Allow-Origin: *`, so the Pages origin can connect.
 Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed content) — the server needs TLS (`wss://`).
 
@@ -177,7 +176,7 @@ Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG)
 ### Rebuilding the client copies
 
 `public/` is the source. After editing it run `python3 build.py` — it rebuilds the single-file `tank-tussle.html`
-(all JS inlined; works by double-click; online works there too if a server URL is set/typed) and syncs `docs/` (keeps `docs/config.js`).
+(all JS inlined; works by double-click; online works there too if `TT_SERVER_URL` is set in `public/config.js`) and syncs `docs/` (keeps `docs/config.js`).
 
 ### Tests (optional, need Chrome + puppeteer-core)
 
