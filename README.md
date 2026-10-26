@@ -45,7 +45,7 @@ Esc / ☰ opens the menu (the host can end the game and return everyone to the l
 - `public/game.js` – shared game logic (maze generation, movement, collisions, bouncing bullets, rounds/scores). Used by the browser (local mode) and by the server (online mode).
 - `public/client.js` – rendering, keyboard/touch input, local loop, online client (interpolates server snapshots).
 - `public/index.html` – UI/menus.
-- `server.js` – static file server + WebSocket rooms (`/ws`); authoritative 60 Hz simulation, 60 Hz snapshots.
+- `server.js` – static file server + WebSocket rooms (`/ws`); authoritative 60 Hz simulation, 30 Hz snapshots.
 
 ## Weapons (crates)
 
@@ -76,7 +76,7 @@ With 0 humans you can watch an all-bot match. On a phone, 1 human + bots works w
 ## Server setup (for the developer hosting online play)
 
 The server (`server.js`) is a small Node.js app: it serves the client from `public/` and runs every online room
-authoritatively (60 Hz simulation, 60 Hz state snapshots over WebSocket at path **`/ws`**; clients interpolate).
+authoritatively (60 Hz simulation, 30 Hz state snapshots over WebSocket at path **`/ws`**; clients interpolate, and predict their own tank so it reacts instantly).
 It shares `public/game.js` (rules, weapons) and `public/bots.js` (AI) with the browser. No database, rooms live in memory.
 
 **Requirements:** Node.js **18+** (tested on 22), one dependency (`ws`). ~1 small CPU core is plenty for many rooms.

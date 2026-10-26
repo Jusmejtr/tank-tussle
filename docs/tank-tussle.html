@@ -472,6 +472,14 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     return [(nx[0] + 0.5) * C.CELL, (nx[1] + 0.5) * C.CELL];
   }
 
+  function moveTank(t, rot, mv, dt, rects) {
+    t.a += rot * C.TANK_ROT * dt;
+    if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
+    const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
+    t.x += Math.cos(t.a) * mv * sp * dt; t.y += Math.sin(t.a) * mv * sp * dt;
+    pushCircleOut(t, C.TANK_R, rects);
+  }
+
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
@@ -485,11 +493,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }
       if (t.weapon === 'deathray' && t.charge > 0) mv = 0; // locked in place while charging (can still aim)
       t.px = t.x; t.py = t.y;
-      t.a += rot * C.TANK_ROT * dt;
-      if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
-      const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
-      t.x += Math.cos(t.a) * mv * sp * dt; t.y += Math.sin(t.a) * mv * sp * dt;
-      pushCircleOut(t, C.TANK_R, g.rects);
+      moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;
       const pressed = k.f && !t.fireHeld;
       if (t.weapon) useWeapon(g, t, k, pressed, dt);
@@ -593,7 +597,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   function snapshot(g) {
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
-      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100]),
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0]),
       b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
@@ -602,7 +606,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -948,7 +952,7 @@ function connect(first) {
   audioInit();
   const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
   $('err').textContent = 'Connecting…';
-  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null,
+  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null, seq: 0, sent: [], pb: null, err: { x: 0, y: 0, a: 0 },
     send(m) { this.ws && this.ws.readyState === 1 && this.ws.send(JSON.stringify(m)); } };
   openSocket(net, Object.assign({ name }, first));
 }
@@ -981,17 +985,18 @@ function openSocket(me, firstMsg) {
       show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
     } else if (m.t === 'lobby') {
       me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level;
-      if (me.started && !m.started) { me.maze = null; me.snaps = []; }
+      if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
       me.started = m.started; renderLobby();
     } else if (m.t === 'maze') {
-      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = [];
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 };
     } else if (m.t === 's') {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
         crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
+      reconcile(me, m.ak, snap.tanks.get(me.you), now);
       for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
     }
@@ -1016,11 +1021,41 @@ function onlineInput() {
   if (touchIn[0]) k = merge(k, touchIn[0]);
   const s = JSON.stringify(k), now = performance.now();
   tapped.clear();
-  if (s !== net.lastSent || now - net.lastSentAt > 250) { net.send({ t: 'input', k }); net.lastSent = s; net.lastSentAt = now; }
+  if (s !== net.lastSent || now - net.lastSentAt > 250) {
+    net.send({ t: 'input', k, s: ++net.seq }); net.lastSent = s; net.lastSentAt = now;
+    net.sent.push({ s: net.seq, at: now, k }); if (net.sent.length > 200) net.sent.shift();
+  }
 }
-const INTERP_DELAY = 50;
+// Own-tank prediction: the server's last state for us, plus our inputs it hasn't applied yet, replayed locally.
+function predictAt(b, to) {
+  const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
+  if (b.frozen) return p;
+  for (let i = S.findIndex(e => e.s === b.s); i >= 0 && i < S.length; i++) {
+    const k = S[i].k, rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = b.charging ? 0 : (k.u ? 1 : 0) - (k.d ? 1 : 0);
+    if (!rot && !mv) continue;
+    let t = Math.max(S[i].at, b.at);
+    const end = i + 1 < S.length ? Math.min(to, S[i + 1].at) : to;
+    while (t < end) { const d = Math.min(1000 / 60, end - t); TT.moveTank(p, rot, mv, d / 1000, net.rects); t += d; }
+  }
+  return p;
+}
+function reconcile(me, ak, mine, now) {
+  const a = ak && ak.find(x => x[0] === me.you);
+  if (!a || !mine || net !== me) return;
+  if (!mine.alive) { if (me.pb) me.pb.frozen = true; return; }
+  const i = me.sent.findIndex(e => e.s === a[1]);
+  if (i < 0) return;
+  const old = me.pb && predictAt(me.pb, now);
+  me.sent.splice(0, i);
+  me.pb = { x: mine.x, y: mine.y, a: mine.a, frozen: mine.frozen, charging: mine.weapon === 'deathray' && mine.charge > 0, s: a[1], at: Math.min(now, me.sent[0].at + a[2] * 1000 / 60) };
+  const p = predictAt(me.pb, now), e = me.err;
+  if (!old) return;
+  e.x += old.x - p.x; e.y += old.y - p.y; e.a = TT.wrapA(e.a + old.a - p.a); // shown offset that fades out, so corrections don't jump
+  if (Math.hypot(e.x, e.y) > 48) e.x = e.y = e.a = 0;
+}
+const INTERP_DELAY = 60;
 function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
-function onlineView() {
+function onlineView(dt) {
   if (!net.maze || !net.snaps.length) return null;
   const rt = performance.now() + net.offset - INTERP_DELAY, S = net.snaps;
   let a = S[0], b = S[0];
@@ -1031,6 +1066,12 @@ function onlineView() {
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
     tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
+  }
+  const mine = net.pb && tanks.find(x => x.id === net.you);
+  if (mine && mine.alive) {
+    const p = predictAt(net.pb, performance.now()), e = net.err, f = Math.exp(-dt * 10);
+    mine.x = p.x + e.x; mine.y = p.y + e.y; mine.a = p.a + e.a;
+    e.x *= f; e.y *= f; e.a *= f;
   }
   const bullets = [];
   for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
@@ -1246,7 +1287,7 @@ function drawWeaponIcon(w) {
   ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
 }
 function drawCrate(c) {
-  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(((c.id * 37) % 41 - 20) * Math.PI / 180);
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(((c.id * 37) % 41 - 20) * Math.PI / 180); ctx.scale(0.75, 0.75);
   drawWeaponIcon(c.type);
   ctx.restore();
 }
@@ -1365,7 +1406,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let view = null;
   if (mode === 'local' && game) { localTick(dt); view = localView(); }
-  else if (mode === 'online' && net) { onlineInput(); view = onlineView(); if (view) view.rects = net.rects; }
+  else if (mode === 'online' && net) { onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
   render(view, dt);
   show('rotate', !!mode && isTouch && innerHeight > innerWidth);
   requestAnimationFrame(frame);

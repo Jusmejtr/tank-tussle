@@ -8,7 +8,7 @@ const TTBots = require('./public/bots.js');
 const PORT = +process.env.PORT || 8090;
 const PUB = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json' };
-const TICK = 1 / 60, SEND_EVERY = 1;      // 60 Hz simulation, 60 Hz snapshots
+const TICK = 1 / 60, SEND_EVERY = 2;      // 60 Hz simulation, 30 Hz snapshots
 const MAX_TANKS = 8, RECONNECT_GRACE_MS = 30000;
 const LEVELS = ['easy', 'normal', 'hard'];
 
@@ -70,10 +70,13 @@ function startGame(room) {
       else inputs[id] = m.connected ? m.input : {};
     }
     TT.step(g, inputs, TICK);
+    for (const m of room.members.values()) if (m.seq) m.ticks++;
     const ev = g.events.splice(0);
     if (g.round !== round) { round = g.round; debugArm(g); broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room)); }
     if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die')) {
-      const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round'); broadcast(room, s);
+      const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round');
+      s.ak = [...room.members.values()].filter(m => m.seq).map(m => [m.id, m.seq, m.ticks]); // last input seq + ticks it has been applied (client prediction)
+      broadcast(room, s);
     }
   }, 1000 * TICK);
 }
@@ -103,7 +106,7 @@ wss.on('connection', ws => {
   const isHost = () => room && me && room.hostId === me.id;
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
-    if (m.t === 'input') { if (me) { const k = m.k || {}; me.input = { u: !!k.u, d: !!k.d, l: !!k.l, r: !!k.r, f: !!k.f }; } return; }
+    if (m.t === 'input') { if (me) { const k = m.k || {}; me.input = { u: !!k.u, d: !!k.d, l: !!k.l, r: !!k.r, f: !!k.f }; if (m.s) { me.seq = m.s >>> 0; me.ticks = 0; } } return; }
     if (m.t === 'create' && !room) { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal' }; rooms.set(r.code, r); join(r, m.name); }
     else if (m.t === 'join' && !room) { const r = rooms.get(String(m.code || '').toUpperCase().trim()); if (!r) return send(ws, { t: 'error', msg: 'Room not found.' }); join(r, m.name); }
     else if (m.t === 'rejoin' && !room) {
