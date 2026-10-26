@@ -4,7 +4,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const errs = [];
   const mk = async l => { const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--allow-file-access-from-files'] }); const p = await b.newPage(); await p.setViewport({ width: 1000, height: 700 }); p.on('pageerror', e => errs.push(l + ': ' + e.message)); p.on('console', m => m.type() === 'error' && errs.push(l + ': ' + m.text())); return { b, p }; };
   const H = await mk('pages-host'), G = await mk('file-guest'), L = await mk('pages-local');
-  const useServer = p => p.evaluateOnNewDocument(() => { window.TT_SERVER_URL = 'http://localhost:8090'; });
+  // pin TT_SERVER_URL so config.js (docs/ sets it to '' unconditionally) can't clear it
+  const useServer = p => p.evaluateOnNewDocument(() => { Object.defineProperty(window, 'TT_SERVER_URL', { get: () => 'http://localhost:8090', set() {}, configurable: true }); });
   await useServer(H.p); await useServer(G.p);
   // 1) "GitHub Pages" static client on another origin, server set via TT_SERVER_URL
   await H.p.goto('http://localhost:8092/', { waitUntil: 'load' });
