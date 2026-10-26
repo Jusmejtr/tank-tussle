@@ -194,8 +194,8 @@ function openSocket(me, firstMsg) {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4] }])),
-        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], armed: !!x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
@@ -238,7 +238,7 @@ function onlineView() {
     tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
   }
   const bullets = [];
-  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a }); else if (t > 0.5) bullets.push(bb); }
+  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
@@ -261,11 +261,14 @@ function handleEvents(evs, tankOf) {
   for (const e of evs) {
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
+    else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'shotgun') { beep(160, 0.18, 'square', 0.07, 0.4); beep(420, 0.08, 'sawtooth', 0.04, 0.5); }
     else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
-    else if (e.type === 'charge') beep(140, 1.0, 'sine', 0.05, 6);
+    else if (e.type === 'charge') beep(140, TT.W.RAY_CHARGE, 'sine', 0.05, 6);
     else if (e.type === 'deathray') beep(900, 0.6, 'sawtooth', 0.05, 0.2);
     else if (e.type === 'missile') beep(300, 0.35, 'triangle', 0.06, 0.5);
     else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
+    else if (e.type === 'reveal') beep(1250, 0.12, 'square', 0.05, 0.9);
     else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
     else if (e.type === 'burst') {
       boom();
@@ -337,12 +340,14 @@ function drawTurret(w, color, charge = 0) {
   const disc = (x, y, r) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); ctx.stroke(); };
   const box = (x, y, w2, h, fill = color) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.rect(x, y, w2, h); ctx.fill(); ctx.stroke(); };
   switch (w) {
-    case 'gatling': // three-barrel rotary gun with a collar
-      for (const y of [-4.6, -1, 2.6]) box(2, y, 16, 2, DARK);
+    case 'gatling': { // three-barrel rotary gun with a collar; the lit barrel cycles while it spins
+      const lit = charge > 0 ? Math.floor(T * 30) % 3 : -1;
+      [-4.6, -1, 2.6].forEach((y, i) => box(2, y, 16, 2, i === lit ? '#888' : DARK));
       box(9, -6, 3.5, 12);
       disc(-1, 0, 6.5);
       ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-1, 0, 2, 0, 6.283); ctx.fill();
       break;
+    }
     case 'laser': // thin, long, glowing barrel on a small angular head
       ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8;
       box(0, -1.3, 23, 2.6);
@@ -379,6 +384,19 @@ function drawTurret(w, color, charge = 0) {
       ctx.restore(); ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
       ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-0.5, 0, 2.5, 0, 6.283); ctx.fill();
       break;
+    case 'rc': // white-nosed launcher with a remote-control antenna
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      box(-3, -4.5, 18, 9);
+      ctx.fillStyle = '#e33'; ctx.fillRect(10, -4.5, 2.5, 9);
+      ctx.strokeStyle = DARK; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(-3, 3); ctx.lineTo(-10, 9); ctx.stroke();
+      ctx.fillStyle = '#e33'; ctx.beginPath(); ctx.arc(-10, 9, 1.8, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      break;
+    case 'shotgun': // short double barrel with a wide muzzle
+      box(2, -4.6, 12, 3.6, DARK); box(2, 1, 12, 3.6, DARK);
+      box(13, -6, 3, 12, DARK);
+      disc(-1, 0, 6);
+      break;
     default: // standard cannon
       box(1, -2, 15, 4, DARK);
       disc(-1, 0, 6);
@@ -392,20 +410,63 @@ function drawTank(x, y, a, color, s = 1, weapon = null, charge = 0) {
   drawTurret(weapon, color, charge);
   ctx.restore();
 }
-function drawCrate(c) {
-  const bob = Math.sin(performance.now() / 300 + c.id) * 1.2;
-  ctx.save(); ctx.translate(c.x, c.y + bob);
-  ctx.fillStyle = '#fafafa'; ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+// Grey bevelled power-up tile with a dark symbol (Tank Trouble style), 22 units wide, centred on the origin.
+function drawWeaponIcon(w) {
+  const g1 = ctx.createLinearGradient(-11, -11, 11, 11); g1.addColorStop(0, '#9a9a9a'); g1.addColorStop(1, '#4e4e4e');
+  ctx.fillStyle = g1; ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.rect(-11, -11, 22, 22); ctx.fill(); ctx.stroke();
-  ctx.scale(0.62, 0.62); ctx.translate(-3, 0); drawTurret(c.type, '#8a8a8a');
+  const g2 = ctx.createLinearGradient(-8, -8, 8, 8); g2.addColorStop(0, '#7c7c7c'); g2.addColorStop(1, '#a4a4a4');
+  ctx.fillStyle = g2; ctx.fillRect(-8, -8, 16, 16);
+  ctx.fillStyle = ctx.strokeStyle = '#262626'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); };
+  switch (w) {
+    case 'gatling':
+      dot(0, 0, 1.3); for (let i = 0; i < 6; i++) dot(Math.cos(i * 1.047) * 4.2, Math.sin(i * 1.047) * 4.2, 1.3);
+      break;
+    case 'laser':
+      ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(2.5, -6); ctx.lineTo(-2.5, -2); ctx.lineTo(2.5, 2); ctx.lineTo(-2.5, 6); ctx.stroke();
+      break;
+    case 'frag':
+      ctx.beginPath(); for (let i = 0; i < 16; i++) { const r = i % 2 ? 2.3 : 6, a = i * Math.PI / 8 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.closePath(); ctx.fill();
+      break;
+    case 'deathray':
+      for (const y of [-4.6, -0.9, 2.8]) ctx.fillRect(-5, y, 10, 1.8);
+      break;
+    case 'missile':
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(1.8, 2.5); ctx.lineTo(4, 6); ctx.lineTo(0, 4.5); ctx.lineTo(-4, 6); ctx.lineTo(-1.8, 2.5); ctx.closePath(); ctx.fill();
+      break;
+    case 'rc':
+      dot(0, 4.5, 1.5); ctx.lineWidth = 1.7;
+      for (const r of [4, 7, 10]) { ctx.beginPath(); ctx.arc(0, 4.5, r, -Math.PI * 0.75, -Math.PI * 0.25); ctx.stroke(); }
+      break;
+    case 'mine':
+      ctx.beginPath(); ctx.moveTo(0, 5.5); ctx.quadraticCurveTo(-6, 2, -5.5, -3.5); ctx.lineTo(-2, -4.8); ctx.lineTo(0, -3.6);
+      ctx.lineTo(2, -4.8); ctx.lineTo(5.5, -3.5); ctx.quadraticCurveTo(6, 2, 0, 5.5); ctx.fill();
+      break;
+    case 'shotgun':
+      dot(0, 5.5, 1.4);
+      for (const [r, n] of [[5, 3], [9.5, 5]]) for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + (i - (n - 1) / 2) * (0.9 / (n - 1)); dot(Math.cos(a) * r, 5.5 + Math.sin(a) * r, 1.2); }
+      break;
+  }
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+}
+function drawCrate(c) {
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(((c.id * 37) % 41 - 20) * Math.PI / 180);
+  drawWeaponIcon(c.type);
   ctx.restore();
 }
-function drawProjectile(b) {
+function drawProjectile(b, colorOf) {
   const k = b.kind || 'b';
-  if (k === 'missile') {
+  if (k === 'missile' || k === 'rc') {
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a || 0);
+    // homing missile smoke takes the colour of the tank it is chasing
+    ctx.fillStyle = k === 'missile' && b.tgt ? colorOf(b.tgt) : '#aaa'; ctx.globalAlpha = 0.6;
+    for (const [px, pr] of [[-15, 2.8], [-21, 2]]) { ctx.beginPath(); ctx.arc(px, Math.random() - 0.5, pr, 0, 6.283); ctx.fill(); }
+    ctx.globalAlpha = 1;
     ctx.fillStyle = Math.random() < 0.5 ? '#f7b733' : '#e8572a'; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-11 - Math.random() * 3, 0); ctx.lineTo(-6, 2); ctx.fill();
-    ctx.fillStyle = '#555'; ctx.fillRect(-6, -2.5, 9, 5); ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
+    ctx.fillStyle = k === 'rc' ? '#eee' : '#555'; ctx.fillRect(-6, -2.5, 9, 5);
+    if (k === 'rc') { ctx.fillStyle = '#e33'; ctx.fillRect(-2, -2.5, 2, 5); }
+    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
     ctx.restore(); return;
   }
   ctx.fillStyle = k === 'frag' ? '#444' : '#222';
@@ -427,12 +488,13 @@ function render(view, dt) {
   for (let c = 1; c < m.cols; c++) { ctx.moveTo(c * CS, 0); ctx.lineTo(c * CS, m.rows * CS); }
   for (let r = 1; r < m.rows; r++) { ctx.moveTo(0, r * CS); ctx.lineTo(m.cols * CS, r * CS); }
   ctx.stroke();
-  // mines (armed ones are barely visible)
+  // booby traps: visible while arming, invisible once armed, flashing once a tank drives over one
   for (const mn of view.mines || []) {
-    ctx.globalAlpha = mn.armed ? 0.22 : 1;
+    if (mn.state === 1) continue;
+    const rev = mn.state === 2, blink = Math.sin(performance.now() / (rev ? 40 : 90)) > 0;
+    if (rev) { ctx.strokeStyle = blink ? '#f33' : '#900'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(mn.x, mn.y, 9, 0, 6.283); ctx.stroke(); }
     ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(mn.x, mn.y, 5.5, 0, 6.283); ctx.fill();
-    ctx.fillStyle = mn.armed ? '#333' : (Math.sin(performance.now() / 90) > 0 ? '#f33' : '#900'); ctx.beginPath(); ctx.arc(mn.x, mn.y, 2, 0, 6.283); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.fillStyle = blink ? '#f33' : '#900'; ctx.beginPath(); ctx.arc(mn.x, mn.y, rev ? 2.8 : 2, 0, 6.283); ctx.fill();
   }
   // crates
   for (const c of view.crates || []) drawCrate(c);
@@ -447,7 +509,7 @@ function render(view, dt) {
   }
   // tanks
   for (const t of view.tanks) if (t.alive) {
-    if (t.charge > 0) { // death ray charging glow
+    if (t.weapon === 'deathray' && t.charge > 0) { // death ray charging glow
       const k = 1 - t.charge / TT.W.RAY_CHARGE;
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
@@ -455,7 +517,7 @@ function render(view, dt) {
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
   }
   // projectiles
-  for (const b of view.bullets) drawProjectile(b);
+  for (const b of view.bullets) drawProjectile(b, colorOf);
   // beams
   for (const bm of view.beams || []) {
     const col = colorOf(bm.owner), ray = bm.kind === 'deathray';
@@ -485,11 +547,11 @@ function render(view, dt) {
     ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
-    ctx.fillStyle = w ? '#fafafa' : 'rgba(255,255,255,.35)'; ctx.strokeStyle = w ? '#555' : '#aaa'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
+    if (!w) { ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke(); }
     if (w) {
-      ctx.save(); ctx.translate(ix - 2 * sc, iy); ctx.scale(0.55 * sc, 0.55 * sc); drawTurret(w, COLORS[p.color]); ctx.restore();
-      if (w === 'gatling' || w === 'mine') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
+      ctx.save(); ctx.translate(ix, iy); ctx.scale(bs / 22, bs / 22); drawWeaponIcon(w); ctx.restore();
+      if (w === 'gatling') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
     }
     ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
     const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
@@ -498,7 +560,7 @@ function render(view, dt) {
 }
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
-    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, armed: m.age >= TT.W.MINE_ARM })),
+    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
     legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 

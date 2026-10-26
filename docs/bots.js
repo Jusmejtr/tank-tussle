@@ -65,7 +65,8 @@
         if (Math.hypot(p.x - t.x, p.y - t.y) < C.TANK_R + p.r + 7) return p;
       }
     }
-    for (const m of g.mines) if (m.age > 0.5 && Math.hypot(m.x - t.x, m.y - t.y) < 60) return { vx: t.x - m.x, vy: t.y - m.y, mine: m };
+    // booby traps are invisible once armed: only avoid ones we can see (arming) or laid ourselves
+    for (const m of g.mines) if (!m.revealed && m.age > 0.3 && (m.owner === t.id || m.age < W.MINE_ARM) && Math.hypot(m.x - t.x, m.y - t.y) < 60) return { vx: t.x - m.x, vy: t.y - m.y, mine: m };
     return null;
   }
 
@@ -76,6 +77,17 @@
     if (!t || !t.alive || !g.maze) return k;
     const L = br.L;
     br.next -= dt; br.cool -= dt; br.reverseT -= dt; br.hold -= dt;
+    const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
+    if (rc) { // our tank is frozen: steer the RC missile through the maze towards the nearest enemy
+      br.lastPos = [t.x, t.y]; br.stuckT = 0;
+      let tgt = null, bd = 1e9;
+      for (const o of Object.values(g.tanks)) if (o.alive && o.id !== t.id) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
+      if (tgt) {
+        const [wx, wy] = TT.nextWaypoint(g, rc.x, rc.y, tgt.x, tgt.y), d = wrap(Math.atan2(wy - rc.y, wx - rc.x) - Math.atan2(rc.vy, rc.vx));
+        if (d > 0.08) k.r = true; else if (d < -0.08) k.l = true;
+      }
+      return finish();
+    }
     // stuck detection
     if (br.lastPos) { const mv = Math.hypot(t.x - br.lastPos[0], t.y - br.lastPos[1]); br.stuckT = br.plan && br.plan.move && mv < 0.4 ? br.stuckT + dt : 0; }
     br.lastPos = [t.x, t.y];
@@ -110,16 +122,19 @@
         }
         // firing decision by weapon
         const w = t.weapon;
-        const now = rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : w === 'deathray' ? W.RAY_LEN : L.rayLen, w === 'laser' || w === 'deathray' ? 9 : L.bounces, w === 'deathray');
+        const now = w === 'deathray' ? (TT.deathRayPath(g, t, t.a).hits.length ? 'enemy' : null)
+          : rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : L.rayLen, w === 'laser' ? 9 : L.bounces, false);
         if (br.cool <= 0) {
           if (!w || w === 'gatling') plan.fire = now === 'enemy' || (now === 'risky' && Math.random() < 0.2);
           else if (w === 'laser' || w === 'deathray') plan.fire = now === 'enemy' || now === 'risky';
+          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self';
           else if (w === 'frag') {
             const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
             if (bomb) plan.fire = enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90);
             else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self';
           }
-          else if (w === 'missile') plan.fire = now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'rc') plan.fire = !t.rcId && td < 8 && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
           else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5;
         }
         if (w === 'deathray' && t.charge > 0) plan.move = false;
@@ -159,7 +174,10 @@
       else if (!br.lastF) { k.f = true; br.cool = t.weapon ? 0.3 : L.fireGap * (0.7 + Math.random() * 0.6); plan.fire = false; }
     }
     return finish();
-    function finish() { br.lastF = k.f; return k; }
+    function finish() {
+      if (g.mines.some(m => m.revealed && Math.hypot(m.x - t.x, m.y - t.y) < W.MINE_NEAR + 4)) k.u = k.d = false; // sit still on a revealed trap
+      br.lastF = k.f; return k;
+    }
   }
   return { LEVELS, newBrain, think };
 });

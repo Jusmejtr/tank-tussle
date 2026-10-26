@@ -86,7 +86,7 @@
         <div class="keys">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling, Laser, Frag bomb (fire again to burst), Death ray, Homing missile, Mines. Last tank standing scores a point. <kbd>Esc</kbd> = menu</div>
+    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point. <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
@@ -224,18 +224,23 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   }
 
   // ---------- Weapons ----------
-  const WEAPONS = ['gatling', 'laser', 'frag', 'deathray', 'missile', 'mine'];
-  const WEAPON_NAMES = { gatling: 'Gatling', laser: 'Laser', frag: 'Frag bomb', deathray: 'Death ray', missile: 'Homing missile', mine: 'Mines' };
+  const WEAPONS = ['gatling', 'laser', 'frag', 'deathray', 'missile', 'mine', 'rc', 'shotgun'];
+  const WEAPON_NAMES = { gatling: 'Gatling gun', laser: 'Laser', frag: 'Frag bomb', deathray: 'Death ray', missile: 'Homing missile', mine: 'Booby trap', rc: 'RC missile', shotgun: 'Shotgun' };
   const W = {
     CRATE_MIN: 8, CRATE_MAX: 12, CRATE_FIRST_MIN: 3, CRATE_FIRST_MAX: 6, MAX_CRATES: 3, CRATE_R: 10,
-    GATLING_AMMO: 24, GATLING_RATE: 0.07, GATLING_SPEED: 200, GATLING_LIFE: 3.5,
-    LASER_LEN: 1100, LASER_GUIDE: 240,
+    GATLING_AMMO: 24, GATLING_SPIN: 1.0, GATLING_RATE: 0.07, GATLING_SPEED: 200, GATLING_LIFE: 3.5, GATLING_SPREAD: 0.13,
+    LASER_LEN: 1100, LASER_GUIDE: 500,
     FRAG_SPEED: 120, FRAG_FUSE: 3, FRAG_PIECES: 26, FRAG_PIECE_SPEED: 210,
-    RAY_CHARGE: 1.0, RAY_LEN: 2200,
-    MISSILE_SPEED: 125, MISSILE_TURN: 3.0, MISSILE_LIFE: 9, MISSILE_SEEK_AFTER: 0.6,
-    MINE_AMMO: 3, MINE_ARM: 1.5, MINE_TRIGGER: 17, MINE_BLAST: 34,
+    RAY_CHARGE: 2.0, RAY_LEN: 2200, RAY_TURN: 0.003, RAY_CONE: 0.9, RAY_LOCK: 0.7,
+    MISSILE_SPEED: 125, MISSILE_TURN: 3.0, MISSILE_LIFE: 9, MISSILE_SEEK_AFTER: 2.0,
+    RC_SPEED: 130, RC_TURN: 3.4, RC_LIFE: 7,
+    MINE_ARM: 1.0, MINE_TRIGGER: 13, MINE_NEAR: 25, MINE_DELAY: 0.25,
+    SHOTGUN_PELLETS: 14, SHOTGUN_SPREAD: 0.3, SHOTGUN_SPEED: 190, SHOTGUN_LIFE_MIN: 2, SHOTGUN_LIFE_MAX: 3,
   };
-  const KIND_R = { b: C.BULLET_R, g: 2.2, frag: 2, bomb: 5, missile: 4 };
+  const KIND_R = { b: C.BULLET_R, g: 2.2, frag: 2, bomb: 5, missile: 4, rc: 4 };
+  const wrapA = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  // 0 = arming (visible), 1 = armed (invisible), 2 = revealed by a tank driving over it
+  const mineState = m => m.revealed ? 2 : m.age >= W.MINE_ARM ? 1 : 0;
 
   // March a ray through the maze with the same bounce rules as bullets. Returns bounce points + dense samples.
   function traceRay(rects, x, y, a, len, stepLen = 2) {
@@ -297,7 +302,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       g.tanks[p.id] = {
         id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
         a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
-        weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0,
+        weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0, rcId: 0, firing: false, lock: 0,
       };
     }
     g.events.push({ type: 'round', round: g.round });
@@ -318,8 +323,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     return c;
   }
   function giveWeapon(t, type) {
-    t.weapon = type; t.cool = 0; t.charge = 0; t.bombId = 0;
-    t.ammo = type === 'gatling' ? W.GATLING_AMMO : type === 'mine' ? W.MINE_AMMO : 1;
+    t.weapon = type; t.cool = 0; t.charge = 0; t.bombId = 0; t.rcId = 0; t.firing = false;
+    t.ammo = type === 'gatling' ? W.GATLING_AMMO : 1;
   }
 
   function moveBullet(b, dist, rects) {
@@ -354,32 +359,60 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     }
     g.events.push({ type: 'burst', x: b.x, y: b.y });
   }
-  function fireBeam(g, t, kind) {
-    const len = kind === 'laser' ? W.LASER_LEN : W.RAY_LEN;
-    const ray = traceRay(g.rects, t.x + Math.cos(t.a) * 8, t.y + Math.sin(t.a) * 8, t.a, len);
-    let cut = ray.pts;
-    for (const [x, y, d] of ray.samples) {
-      let hitAny = false;
-      for (const o of Object.values(g.tanks)) {
-        if (!o.alive) continue;
-        if (o.id === t.id && (kind === 'deathray' || d < 30)) continue; // death ray never hits its owner
-        if (Math.hypot(o.x - x, o.y - y) < C.TANK_R) { kill(g, o, t.id, kind); hitAny = true; }
+  // Death ray: ignores inner walls, bends slightly towards tanks ahead of it, ends at the outer wall. Never hits its owner.
+  function deathRayPath(g, t, a) {
+    const Wd = g.maze.cols * C.CELL, Hd = g.maze.rows * C.CELL, step = 2;
+    let x = t.x + Math.cos(a) * 8, y = t.y + Math.sin(a) * 8;
+    const pts = [[x, y]], hits = [], foes = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+    for (let d = 0; d < W.RAY_LEN; d += step) {
+      let best = null, bd = 1e9;
+      for (const o of foes) {
+        if (hits.includes(o.id)) continue;
+        const dist = Math.hypot(o.x - x, o.y - y), off = wrapA(Math.atan2(o.y - y, o.x - x) - a);
+        if (Math.abs(off) < W.RAY_CONE && dist < bd) { bd = dist; best = off; }
       }
-      if (hitAny && kind === 'laser') { // laser stops at first victim
-        cut = ray.pts.filter(p => p[2] < d); cut.push([x, y]); break;
+      if (best !== null) a += Math.max(-W.RAY_TURN * step, Math.min(W.RAY_TURN * step, best));
+      x += Math.cos(a) * step; y += Math.sin(a) * step;
+      if (x < 0 || y < 0 || x > Wd || y > Hd) { x = Math.max(0, Math.min(Wd, x)); y = Math.max(0, Math.min(Hd, y)); break; }
+      for (const o of foes) if (!hits.includes(o.id) && Math.hypot(o.x - x, o.y - y) < C.TANK_R) hits.push(o.id);
+      if (d % 8 === 0) pts.push([x, y]);
+    }
+    pts.push([x, y]);
+    return { pts, hits };
+  }
+  function fireBeam(g, t, kind) {
+    let cut;
+    if (kind === 'deathray') {
+      const p = deathRayPath(g, t, t.a); cut = p.pts;
+      for (const id of p.hits) kill(g, g.tanks[id], t.id, kind);
+      t.lock = W.RAY_LOCK;
+    } else {
+      const ray = traceRay(g.rects, t.x + Math.cos(t.a) * 8, t.y + Math.sin(t.a) * 8, t.a, W.LASER_LEN);
+      cut = ray.pts;
+      for (const [x, y, d] of ray.samples) {
+        let hitAny = false;
+        for (const o of Object.values(g.tanks)) {
+          if (!o.alive || (o.id === t.id && d < 30)) continue;
+          if (Math.hypot(o.x - x, o.y - y) < C.TANK_R) { kill(g, o, t.id, kind); hitAny = true; }
+        }
+        if (hitAny) { // laser stops at first victim
+          cut = ray.pts.filter(p => p[2] < d); cut.push([x, y]); break;
+        }
       }
     }
-    g.beams.push({ id: g.nextId++, kind, owner: t.id, pts: cut, life: kind === 'laser' ? 0.35 : 0.7 });
+    g.beams.push({ id: g.nextId++, kind, owner: t.id, pts: cut, life: kind === 'laser' ? 0.35 : W.RAY_LOCK });
     g.events.push({ type: kind, id: t.id });
   }
 
-  function useWeapon(g, t, k, pressed) {
+  function useWeapon(g, t, k, pressed, dt) {
     switch (t.weapon) {
-      case 'gatling':
-        if (k.f && t.cool <= 0) {
-          spawnProjectile(g, t, 'g', W.GATLING_SPEED, { spread: 0.07, life: W.GATLING_LIFE });
+      case 'gatling': // one press: barrels spin up, then the whole belt sprays out
+        if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; t.firing = true; } }
+        else if (!t.firing && pressed) { t.charge = W.GATLING_SPIN; g.events.push({ type: 'spin', id: t.id }); }
+        if (t.firing && t.cool <= 0) {
+          spawnProjectile(g, t, 'g', W.GATLING_SPEED, { spread: W.GATLING_SPREAD, life: W.GATLING_LIFE });
           t.cool = W.GATLING_RATE; t.ammo--; g.events.push({ type: 'gat', id: t.id });
-          if (t.ammo <= 0) t.weapon = null;
+          if (t.ammo <= 0) { t.weapon = null; t.firing = false; }
         }
         break;
       case 'laser': if (pressed) { fireBeam(g, t, 'laser'); t.weapon = null; } break;
@@ -392,16 +425,29 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         if (t.bombId && !bomb && !pressed) { t.weapon = null; t.bombId = 0; } // auto-burst already happened
         break;
       }
-      case 'deathray': if (pressed && t.charge <= 0) { t.charge = W.RAY_CHARGE; g.events.push({ type: 'charge', id: t.id }); } break;
+      case 'deathray':
+        if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; fireBeam(g, t, 'deathray'); t.weapon = null; } }
+        else if (pressed) { t.charge = W.RAY_CHARGE; g.events.push({ type: 'charge', id: t.id }); }
+        break;
       case 'missile':
         if (pressed) { spawnProjectile(g, t, 'missile', W.MISSILE_SPEED, { life: W.MISSILE_LIFE, grace: 0.5 }); t.weapon = null; g.events.push({ type: 'missile', id: t.id }); }
         break;
+      case 'rc': // tank is frozen while its missile flies; left/right steer the missile
+        if (!t.rcId) { if (pressed) { t.rcId = spawnProjectile(g, t, 'rc', W.RC_SPEED, { life: W.RC_LIFE, grace: 0.5, steer: 0 }).id; g.events.push({ type: 'missile', id: t.id }); } }
+        else if (!g.bullets.some(b => b.id === t.rcId)) { t.weapon = null; t.rcId = 0; }
+        break;
       case 'mine':
         if (pressed) {
-          g.mines.push({ id: g.nextId++, owner: t.id, x: t.x - Math.cos(t.a) * (C.TANK_R + 6), y: t.y - Math.sin(t.a) * (C.TANK_R + 6), age: 0 });
-          const m = g.mines[g.mines.length - 1]; pushCircleOut(m, 5, g.rects);
+          const m = { id: g.nextId++, owner: t.id, x: t.x - Math.cos(t.a) * (C.TANK_R + 6), y: t.y - Math.sin(t.a) * (C.TANK_R + 6), age: 0, revealed: false, rt: 0 };
+          pushCircleOut(m, 5, g.rects); g.mines.push(m);
           g.events.push({ type: 'mine', id: t.id });
-          if (--t.ammo <= 0) t.weapon = null;
+          t.weapon = null;
+        }
+        break;
+      case 'shotgun':
+        if (pressed) {
+          for (let i = 0; i < W.SHOTGUN_PELLETS; i++) spawnProjectile(g, t, 'g', W.SHOTGUN_SPEED * rand(0.85, 1.15), { spread: W.SHOTGUN_SPREAD, life: rand(W.SHOTGUN_LIFE_MIN, W.SHOTGUN_LIFE_MAX) });
+          t.weapon = null; g.events.push({ type: 'shotgun', id: t.id });
         }
         break;
     }
@@ -434,7 +480,11 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       if (!t.alive) continue;
       const k = inputs[t.id] || {};
       let rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = (k.u ? 1 : 0) - (k.d ? 1 : 0);
-      if (t.charge > 0) mv = 0; // death ray: tank is locked in place while charging (can still aim)
+      const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
+      if (rc) { rc.steer = rot; rot = 0; mv = 0; }
+      if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }
+      if (t.weapon === 'deathray' && t.charge > 0) mv = 0; // locked in place while charging (can still aim)
+      t.px = t.x; t.py = t.y;
       t.a += rot * C.TANK_ROT * dt;
       if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
       const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
@@ -442,8 +492,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       pushCircleOut(t, C.TANK_R, g.rects);
       t.cool -= dt;
       const pressed = k.f && !t.fireHeld;
-      if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; fireBeam(g, t, 'deathray'); t.weapon = null; } }
-      else if (t.weapon) useWeapon(g, t, k, pressed);
+      if (t.weapon) useWeapon(g, t, k, pressed, dt);
       else if (pressed) fire(g, t);
       t.fireHeld = !!k.f;
       // crate pickup (only with an empty slot)
@@ -458,6 +507,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), m = 2 * C.TANK_R;
       if (d < m && d > 1e-6) { const p = (m - d) / 2; a.x -= dx / d * p; a.y -= dy / d * p; b.x += dx / d * p; b.y += dy / d * p; pushCircleOut(a, C.TANK_R, g.rects); pushCircleOut(b, C.TANK_R, g.rects); }
     }
+    for (const t of tanks) t.moved = t.alive && t.px != null && Math.hypot(t.x - t.px, t.y - t.py) > 0.05;
     // projectiles
     const keep = [], born = [];
     const all = g.bullets; g.bullets = born; // bursts during this loop land in `born`
@@ -467,7 +517,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       if (b.age > life) { if (b.kind === 'bomb') burstFrag(g, b); continue; }
       if (b.kind === 'missile' && b.age > W.MISSILE_SEEK_AFTER) {
         let tgt = null, bd = 1e9;
-        for (const t of tanks) if (t.alive && (t.id !== b.owner || b.age > 3)) { const d = Math.hypot(t.x - b.x, t.y - b.y); if (d < bd) { bd = d; tgt = t; } }
+        for (const t of tanks) if (t.alive) { const d = Math.hypot(t.x - b.x, t.y - b.y); if (d < bd) { bd = d; tgt = t; } } // nearest tank — may be you
+        b.tgt = tgt ? tgt.id : 0;
         if (tgt) {
           const [wx, wy] = nextWaypoint(g, b.x, b.y, tgt.x, tgt.y);
           let want = Math.atan2(wy - b.y, wx - b.x), cur = Math.atan2(b.vy, b.vx), d = want - cur;
@@ -475,6 +526,10 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
           cur += Math.max(-W.MISSILE_TURN * dt, Math.min(W.MISSILE_TURN * dt, d));
           b.vx = Math.cos(cur) * W.MISSILE_SPEED; b.vy = Math.sin(cur) * W.MISSILE_SPEED;
         }
+      }
+      if (b.kind === 'rc' && b.steer) {
+        const cur = Math.atan2(b.vy, b.vx) + b.steer * W.RC_TURN * dt;
+        b.vx = Math.cos(cur) * W.RC_SPEED; b.vy = Math.sin(cur) * W.RC_SPEED; b.steer = 0;
       }
       if (moveBullet(b, Math.hypot(b.vx, b.vy) * dt, g.rects)) g.events.push({ type: 'bounce' });
       b.a = Math.atan2(b.vy, b.vx);
@@ -491,11 +546,16 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     g.bullets = keep.concat(born);
     // mines
     for (const m of g.mines) m.age += dt;
+    // booby traps: only tanks driving over them reveal them; after that, any movement nearby sets them off
     g.mines = g.mines.filter(m => {
       if (m.age < W.MINE_ARM) return true;
-      if (!tanks.some(t => t.alive && Math.hypot(t.x - m.x, t.y - m.y) < C.TANK_R + W.MINE_TRIGGER - 6)) return true;
-      for (const t of tanks) if (t.alive && Math.hypot(t.x - m.x, t.y - m.y) < W.MINE_BLAST + C.TANK_R) kill(g, t, m.owner, 'mine');
-      g.events.push({ type: 'burst', x: m.x, y: m.y, mine: true });
+      if (!m.revealed) {
+        if (tanks.some(t => t.alive && Math.hypot(t.x - m.x, t.y - m.y) < W.MINE_TRIGGER)) { m.revealed = true; m.rt = 0; g.events.push({ type: 'reveal', x: m.x, y: m.y }); }
+        return true;
+      }
+      m.rt += dt;
+      if (m.rt < W.MINE_DELAY || !tanks.some(t => t.moved && Math.hypot(t.x - m.x, t.y - m.y) < W.MINE_NEAR)) return true;
+      burstFrag(g, m);
       return false;
     });
     // beams fade
@@ -529,20 +589,20 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   }
 
   const r1 = v => Math.round(v * 10) / 10;
-  const KINDS = ['b', 'g', 'frag', 'bomb', 'missile'];
+  const KINDS = ['b', 'g', 'frag', 'bomb', 'missile', 'rc'];
   function snapshot(g) {
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
-      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round(t.charge * 100) / 100]),
-      b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100]),
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100]),
+      b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
-      mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), m.age >= W.MINE_ARM ? 1 : 0, m.owner]),
+      mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
       sc: g.players.map(p => [p.id, p.score]),
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -614,7 +674,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         if (Math.hypot(p.x - t.x, p.y - t.y) < C.TANK_R + p.r + 7) return p;
       }
     }
-    for (const m of g.mines) if (m.age > 0.5 && Math.hypot(m.x - t.x, m.y - t.y) < 60) return { vx: t.x - m.x, vy: t.y - m.y, mine: m };
+    // booby traps are invisible once armed: only avoid ones we can see (arming) or laid ourselves
+    for (const m of g.mines) if (!m.revealed && m.age > 0.3 && (m.owner === t.id || m.age < W.MINE_ARM) && Math.hypot(m.x - t.x, m.y - t.y) < 60) return { vx: t.x - m.x, vy: t.y - m.y, mine: m };
     return null;
   }
 
@@ -625,6 +686,17 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     if (!t || !t.alive || !g.maze) return k;
     const L = br.L;
     br.next -= dt; br.cool -= dt; br.reverseT -= dt; br.hold -= dt;
+    const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
+    if (rc) { // our tank is frozen: steer the RC missile through the maze towards the nearest enemy
+      br.lastPos = [t.x, t.y]; br.stuckT = 0;
+      let tgt = null, bd = 1e9;
+      for (const o of Object.values(g.tanks)) if (o.alive && o.id !== t.id) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
+      if (tgt) {
+        const [wx, wy] = TT.nextWaypoint(g, rc.x, rc.y, tgt.x, tgt.y), d = wrap(Math.atan2(wy - rc.y, wx - rc.x) - Math.atan2(rc.vy, rc.vx));
+        if (d > 0.08) k.r = true; else if (d < -0.08) k.l = true;
+      }
+      return finish();
+    }
     // stuck detection
     if (br.lastPos) { const mv = Math.hypot(t.x - br.lastPos[0], t.y - br.lastPos[1]); br.stuckT = br.plan && br.plan.move && mv < 0.4 ? br.stuckT + dt : 0; }
     br.lastPos = [t.x, t.y];
@@ -659,16 +731,19 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         }
         // firing decision by weapon
         const w = t.weapon;
-        const now = rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : w === 'deathray' ? W.RAY_LEN : L.rayLen, w === 'laser' || w === 'deathray' ? 9 : L.bounces, w === 'deathray');
+        const now = w === 'deathray' ? (TT.deathRayPath(g, t, t.a).hits.length ? 'enemy' : null)
+          : rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : L.rayLen, w === 'laser' ? 9 : L.bounces, false);
         if (br.cool <= 0) {
           if (!w || w === 'gatling') plan.fire = now === 'enemy' || (now === 'risky' && Math.random() < 0.2);
           else if (w === 'laser' || w === 'deathray') plan.fire = now === 'enemy' || now === 'risky';
+          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self';
           else if (w === 'frag') {
             const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
             if (bomb) plan.fire = enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90);
             else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self';
           }
-          else if (w === 'missile') plan.fire = now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'rc') plan.fire = !t.rcId && td < 8 && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
           else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5;
         }
         if (w === 'deathray' && t.charge > 0) plan.move = false;
@@ -708,7 +783,10 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       else if (!br.lastF) { k.f = true; br.cool = t.weapon ? 0.3 : L.fireGap * (0.7 + Math.random() * 0.6); plan.fire = false; }
     }
     return finish();
-    function finish() { br.lastF = k.f; return k; }
+    function finish() {
+      if (g.mines.some(m => m.revealed && Math.hypot(m.x - t.x, m.y - t.y) < W.MINE_NEAR + 4)) k.u = k.d = false; // sit still on a revealed trap
+      br.lastF = k.f; return k;
+    }
   }
   return { LEVELS, newBrain, think };
 });
@@ -911,8 +989,8 @@ function openSocket(me, firstMsg) {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4] }])),
-        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], armed: !!x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
@@ -955,7 +1033,7 @@ function onlineView() {
     tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
   }
   const bullets = [];
-  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a }); else if (t > 0.5) bullets.push(bb); }
+  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
@@ -978,11 +1056,14 @@ function handleEvents(evs, tankOf) {
   for (const e of evs) {
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
+    else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'shotgun') { beep(160, 0.18, 'square', 0.07, 0.4); beep(420, 0.08, 'sawtooth', 0.04, 0.5); }
     else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
-    else if (e.type === 'charge') beep(140, 1.0, 'sine', 0.05, 6);
+    else if (e.type === 'charge') beep(140, TT.W.RAY_CHARGE, 'sine', 0.05, 6);
     else if (e.type === 'deathray') beep(900, 0.6, 'sawtooth', 0.05, 0.2);
     else if (e.type === 'missile') beep(300, 0.35, 'triangle', 0.06, 0.5);
     else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
+    else if (e.type === 'reveal') beep(1250, 0.12, 'square', 0.05, 0.9);
     else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
     else if (e.type === 'burst') {
       boom();
@@ -1054,12 +1135,14 @@ function drawTurret(w, color, charge = 0) {
   const disc = (x, y, r) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); ctx.stroke(); };
   const box = (x, y, w2, h, fill = color) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.rect(x, y, w2, h); ctx.fill(); ctx.stroke(); };
   switch (w) {
-    case 'gatling': // three-barrel rotary gun with a collar
-      for (const y of [-4.6, -1, 2.6]) box(2, y, 16, 2, DARK);
+    case 'gatling': { // three-barrel rotary gun with a collar; the lit barrel cycles while it spins
+      const lit = charge > 0 ? Math.floor(T * 30) % 3 : -1;
+      [-4.6, -1, 2.6].forEach((y, i) => box(2, y, 16, 2, i === lit ? '#888' : DARK));
       box(9, -6, 3.5, 12);
       disc(-1, 0, 6.5);
       ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-1, 0, 2, 0, 6.283); ctx.fill();
       break;
+    }
     case 'laser': // thin, long, glowing barrel on a small angular head
       ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8;
       box(0, -1.3, 23, 2.6);
@@ -1096,6 +1179,19 @@ function drawTurret(w, color, charge = 0) {
       ctx.restore(); ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
       ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-0.5, 0, 2.5, 0, 6.283); ctx.fill();
       break;
+    case 'rc': // white-nosed launcher with a remote-control antenna
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      box(-3, -4.5, 18, 9);
+      ctx.fillStyle = '#e33'; ctx.fillRect(10, -4.5, 2.5, 9);
+      ctx.strokeStyle = DARK; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(-3, 3); ctx.lineTo(-10, 9); ctx.stroke();
+      ctx.fillStyle = '#e33'; ctx.beginPath(); ctx.arc(-10, 9, 1.8, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      break;
+    case 'shotgun': // short double barrel with a wide muzzle
+      box(2, -4.6, 12, 3.6, DARK); box(2, 1, 12, 3.6, DARK);
+      box(13, -6, 3, 12, DARK);
+      disc(-1, 0, 6);
+      break;
     default: // standard cannon
       box(1, -2, 15, 4, DARK);
       disc(-1, 0, 6);
@@ -1109,20 +1205,63 @@ function drawTank(x, y, a, color, s = 1, weapon = null, charge = 0) {
   drawTurret(weapon, color, charge);
   ctx.restore();
 }
-function drawCrate(c) {
-  const bob = Math.sin(performance.now() / 300 + c.id) * 1.2;
-  ctx.save(); ctx.translate(c.x, c.y + bob);
-  ctx.fillStyle = '#fafafa'; ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+// Grey bevelled power-up tile with a dark symbol (Tank Trouble style), 22 units wide, centred on the origin.
+function drawWeaponIcon(w) {
+  const g1 = ctx.createLinearGradient(-11, -11, 11, 11); g1.addColorStop(0, '#9a9a9a'); g1.addColorStop(1, '#4e4e4e');
+  ctx.fillStyle = g1; ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.rect(-11, -11, 22, 22); ctx.fill(); ctx.stroke();
-  ctx.scale(0.62, 0.62); ctx.translate(-3, 0); drawTurret(c.type, '#8a8a8a');
+  const g2 = ctx.createLinearGradient(-8, -8, 8, 8); g2.addColorStop(0, '#7c7c7c'); g2.addColorStop(1, '#a4a4a4');
+  ctx.fillStyle = g2; ctx.fillRect(-8, -8, 16, 16);
+  ctx.fillStyle = ctx.strokeStyle = '#262626'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); };
+  switch (w) {
+    case 'gatling':
+      dot(0, 0, 1.3); for (let i = 0; i < 6; i++) dot(Math.cos(i * 1.047) * 4.2, Math.sin(i * 1.047) * 4.2, 1.3);
+      break;
+    case 'laser':
+      ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(2.5, -6); ctx.lineTo(-2.5, -2); ctx.lineTo(2.5, 2); ctx.lineTo(-2.5, 6); ctx.stroke();
+      break;
+    case 'frag':
+      ctx.beginPath(); for (let i = 0; i < 16; i++) { const r = i % 2 ? 2.3 : 6, a = i * Math.PI / 8 - Math.PI / 2; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.closePath(); ctx.fill();
+      break;
+    case 'deathray':
+      for (const y of [-4.6, -0.9, 2.8]) ctx.fillRect(-5, y, 10, 1.8);
+      break;
+    case 'missile':
+      ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(1.8, 2.5); ctx.lineTo(4, 6); ctx.lineTo(0, 4.5); ctx.lineTo(-4, 6); ctx.lineTo(-1.8, 2.5); ctx.closePath(); ctx.fill();
+      break;
+    case 'rc':
+      dot(0, 4.5, 1.5); ctx.lineWidth = 1.7;
+      for (const r of [4, 7, 10]) { ctx.beginPath(); ctx.arc(0, 4.5, r, -Math.PI * 0.75, -Math.PI * 0.25); ctx.stroke(); }
+      break;
+    case 'mine':
+      ctx.beginPath(); ctx.moveTo(0, 5.5); ctx.quadraticCurveTo(-6, 2, -5.5, -3.5); ctx.lineTo(-2, -4.8); ctx.lineTo(0, -3.6);
+      ctx.lineTo(2, -4.8); ctx.lineTo(5.5, -3.5); ctx.quadraticCurveTo(6, 2, 0, 5.5); ctx.fill();
+      break;
+    case 'shotgun':
+      dot(0, 5.5, 1.4);
+      for (const [r, n] of [[5, 3], [9.5, 5]]) for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + (i - (n - 1) / 2) * (0.9 / (n - 1)); dot(Math.cos(a) * r, 5.5 + Math.sin(a) * r, 1.2); }
+      break;
+  }
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+}
+function drawCrate(c) {
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(((c.id * 37) % 41 - 20) * Math.PI / 180);
+  drawWeaponIcon(c.type);
   ctx.restore();
 }
-function drawProjectile(b) {
+function drawProjectile(b, colorOf) {
   const k = b.kind || 'b';
-  if (k === 'missile') {
+  if (k === 'missile' || k === 'rc') {
     ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a || 0);
+    // homing missile smoke takes the colour of the tank it is chasing
+    ctx.fillStyle = k === 'missile' && b.tgt ? colorOf(b.tgt) : '#aaa'; ctx.globalAlpha = 0.6;
+    for (const [px, pr] of [[-15, 2.8], [-21, 2]]) { ctx.beginPath(); ctx.arc(px, Math.random() - 0.5, pr, 0, 6.283); ctx.fill(); }
+    ctx.globalAlpha = 1;
     ctx.fillStyle = Math.random() < 0.5 ? '#f7b733' : '#e8572a'; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-11 - Math.random() * 3, 0); ctx.lineTo(-6, 2); ctx.fill();
-    ctx.fillStyle = '#555'; ctx.fillRect(-6, -2.5, 9, 5); ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
+    ctx.fillStyle = k === 'rc' ? '#eee' : '#555'; ctx.fillRect(-6, -2.5, 9, 5);
+    if (k === 'rc') { ctx.fillStyle = '#e33'; ctx.fillRect(-2, -2.5, 2, 5); }
+    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
     ctx.restore(); return;
   }
   ctx.fillStyle = k === 'frag' ? '#444' : '#222';
@@ -1144,12 +1283,13 @@ function render(view, dt) {
   for (let c = 1; c < m.cols; c++) { ctx.moveTo(c * CS, 0); ctx.lineTo(c * CS, m.rows * CS); }
   for (let r = 1; r < m.rows; r++) { ctx.moveTo(0, r * CS); ctx.lineTo(m.cols * CS, r * CS); }
   ctx.stroke();
-  // mines (armed ones are barely visible)
+  // booby traps: visible while arming, invisible once armed, flashing once a tank drives over one
   for (const mn of view.mines || []) {
-    ctx.globalAlpha = mn.armed ? 0.22 : 1;
+    if (mn.state === 1) continue;
+    const rev = mn.state === 2, blink = Math.sin(performance.now() / (rev ? 40 : 90)) > 0;
+    if (rev) { ctx.strokeStyle = blink ? '#f33' : '#900'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(mn.x, mn.y, 9, 0, 6.283); ctx.stroke(); }
     ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(mn.x, mn.y, 5.5, 0, 6.283); ctx.fill();
-    ctx.fillStyle = mn.armed ? '#333' : (Math.sin(performance.now() / 90) > 0 ? '#f33' : '#900'); ctx.beginPath(); ctx.arc(mn.x, mn.y, 2, 0, 6.283); ctx.fill();
-    ctx.globalAlpha = 1;
+    ctx.fillStyle = blink ? '#f33' : '#900'; ctx.beginPath(); ctx.arc(mn.x, mn.y, rev ? 2.8 : 2, 0, 6.283); ctx.fill();
   }
   // crates
   for (const c of view.crates || []) drawCrate(c);
@@ -1164,7 +1304,7 @@ function render(view, dt) {
   }
   // tanks
   for (const t of view.tanks) if (t.alive) {
-    if (t.charge > 0) { // death ray charging glow
+    if (t.weapon === 'deathray' && t.charge > 0) { // death ray charging glow
       const k = 1 - t.charge / TT.W.RAY_CHARGE;
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
@@ -1172,7 +1312,7 @@ function render(view, dt) {
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
   }
   // projectiles
-  for (const b of view.bullets) drawProjectile(b);
+  for (const b of view.bullets) drawProjectile(b, colorOf);
   // beams
   for (const bm of view.beams || []) {
     const col = colorOf(bm.owner), ray = bm.kind === 'deathray';
@@ -1202,11 +1342,11 @@ function render(view, dt) {
     ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
-    ctx.fillStyle = w ? '#fafafa' : 'rgba(255,255,255,.35)'; ctx.strokeStyle = w ? '#555' : '#aaa'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
+    if (!w) { ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke(); }
     if (w) {
-      ctx.save(); ctx.translate(ix - 2 * sc, iy); ctx.scale(0.55 * sc, 0.55 * sc); drawTurret(w, COLORS[p.color]); ctx.restore();
-      if (w === 'gatling' || w === 'mine') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
+      ctx.save(); ctx.translate(ix, iy); ctx.scale(bs / 22, bs / 22); drawWeaponIcon(w); ctx.restore();
+      if (w === 'gatling') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
     }
     ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
     const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
@@ -1215,7 +1355,7 @@ function render(view, dt) {
 }
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
-    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, armed: m.age >= TT.W.MINE_ARM })),
+    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
     legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 

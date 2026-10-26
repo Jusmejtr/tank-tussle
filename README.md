@@ -54,19 +54,21 @@ The tank's turret changes shape so everyone can see what you carry, and the icon
 
 | Weapon | Turret look | How it works |
 |---|---|---|
-| Gatling | three thin barrels + collar | hold fire: 24 rapid small bullets |
-| Laser | long thin glowing barrel | dashed aim guide while held; fire = instant bouncing beam, kills first tank hit |
-| Frag bomb | stubby wide mortar | fire launches a bomb; fire again to burst into shrapnel (auto-bursts after 3 s) |
-| Death ray | dish emitter | fire = 1 s charge (tank can't drive, can aim), then a long bouncing beam that kills every other tank it touches |
-| Homing missile | launcher tube | follows the maze to the nearest tank (can come back for you after 3 s) |
-| Mines | flat striped box, no barrel | fire drops a mine behind you (3 per crate); arms after 1.5 s and turns almost invisible |
+| Gatling gun | three thin barrels + collar | fire once: barrels spin up for ~1 s, then 24 tiny bullets spray out in a wobbly stream |
+| Laser | long thin glowing barrel | dashed aim guide (about half the range); fire = instant bouncing beam, stops at the first tank hit |
+| Frag bomb | stubby wide mortar | fire launches a bigger bullet; fire again (or hit a tank) to burst into shrapnel (auto-bursts after 3 s) |
+| Death ray | dish emitter | fire = 2 s charge (tank can't drive, can aim), then a beam that goes **through walls**, bends slightly towards tanks ahead and kills every other tank it touches until the outer wall |
+| RC missile | white-nosed launcher + antenna | fire a missile you steer with left/right; your tank is frozen until it hits something or times out (7 s) |
+| Homing missile | launcher tube | bounces around for 2 s, then its smoke turns the colour of the nearest tank (can be you!) and it chases that tank through the maze |
+| Booby trap | flat striped box, no barrel | drops a mine behind you; armed after 1 s and fully invisible. A tank driving over it reveals it — stop at once and it stays quiet, move and it bursts into shrapnel. Bullets don't trigger it |
+| Shotgun | short double barrel | one blast of 14 tiny pellets in a cone; they bounce and vanish after 2–3 s |
 
 ## Bots
 
 On the title screen pick 0–4 human players, then add bots with **Bots − / +** (up to 8 tanks in total, at least 2) and choose **Easy / Normal / Hard**.
 Tanks 5–8 are Orange, Purple, Cyan and Pink; bots are labelled *Bot 1, Bot 2…*. Mazes get bigger with more tanks (up to 13×9).
 Bots path-find through the maze (BFS) to the nearest enemy, fire when their aim line hits a tank (Normal/Hard also use 1–2 wall bounces),
-dodge incoming bullets and armed mines, grab crates and use each weapon (burst frags near enemies, laser/death ray only when the beam will hit, etc.),
+dodge incoming bullets and visible mines, grab crates and use each weapon (burst frags near enemies, laser/death ray only when the beam will hit, steer RC missiles through the maze, freeze on a revealed booby trap, etc.),
 and skip shots that would bounce straight back at them. Skill changes reaction time, aim error, dodge rate and bounce shots.
 With 0 humans you can watch an all-bot match. On a phone, 1 human + bots works with the on-screen stick + FIRE.
 
