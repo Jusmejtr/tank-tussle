@@ -10,8 +10,8 @@
     TANK_SPEED: 105, TANK_ROT: 3.4, ROUND_END_DELAY: 3,
     OWNER_GRACE: 0.05,
   };
-  const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800'];
-  const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow'];
+  const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
+  const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
 
   const rand = (a, b) => a + Math.random() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b + 1));
@@ -146,7 +146,11 @@
     delete g.tanks[id];
   }
   function mazeSizeFor(n) {
-    return n <= 2 ? [randi(5, 8), randi(4, 6)] : n === 3 ? [randi(7, 9), randi(5, 7)] : [randi(8, 10), randi(6, 7)];
+    if (n <= 2) return [randi(5, 8), randi(4, 6)];
+    if (n === 3) return [randi(7, 9), randi(5, 7)];
+    if (n === 4) return [randi(8, 10), randi(6, 7)];
+    if (n <= 6) return [randi(10, 12), randi(7, 8)];
+    return [randi(12, 13), randi(8, 9)];
   }
   function newRound(g) {
     const n = Math.max(1, g.players.length);
@@ -414,5 +418,5 @@
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });

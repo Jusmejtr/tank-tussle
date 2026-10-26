@@ -64,4 +64,11 @@ The tank's turret changes shape so everyone can see what you carry, and the icon
 | Homing missile | launcher tube | follows the maze to the nearest tank (can come back for you after 3 s) |
 | Mines | flat striped box, no barrel | fire drops a mine behind you (3 per crate); arms after 1.5 s and turns almost invisible |
 
-Not done yet: AI bots.
+## Bots
+
+On the title screen pick 0–4 human players, then add bots with **Bots − / +** (up to 8 tanks in total, at least 2) and choose **Easy / Normal / Hard**.
+Tanks 5–8 are Orange, Purple, Cyan and Pink; bots are labelled *Bot 1, Bot 2…*. Mazes get bigger with more tanks (up to 13×9).
+Bots path-find through the maze (BFS) to the nearest enemy, fire when their aim line hits a tank (Normal/Hard also use 1–2 wall bounces),
+dodge incoming bullets and armed mines, grab crates and use each weapon (burst frags near enemies, laser/death ray only when the beam will hit, etc.),
+and skip shots that would bounce straight back at them. Skill changes reaction time, aim error, dodge rate and bounce shots.
+With 0 humans you can watch an all-bot match. On a phone, 1 human + bots works with the on-screen stick + FIRE.

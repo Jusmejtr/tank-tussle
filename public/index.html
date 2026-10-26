@@ -20,6 +20,7 @@
   .col { flex: 1 1 300px; background: #e6e6e6; border: 2px solid #aaa; border-radius: 5px; padding: 12px; }
   h2 { margin: 0 0 10px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
   button { font: inherit; font-weight: bold; border: 2px solid #444; background: #fff; border-radius: 4px; padding: 8px 14px; cursor: pointer; box-shadow: 0 3px 0 #777; }
+  button:disabled { opacity: .45; cursor: default; }
   button:active { transform: translateY(2px); box-shadow: 0 1px 0 #777; }
   button.go { background: #4c4c4c; color: #fff; }
   button.sel { background: #4c4c4c; color: #fff; }
@@ -61,10 +62,17 @@
     <div class="cols">
       <div class="col">
         <h2>Same keyboard</h2>
-        <div class="row seg" id="nSel"><span>Players:</span>
-          <button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
-          <button class="go" id="playLocal" style="margin-left:auto">Play ▶</button>
+        <div class="row seg" id="nSel"><span style="width:64px">Players:</span>
+          <button data-n="0">0</button><button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
         </div>
+        <div class="row seg"><span style="width:64px">Bots:</span>
+          <button id="botMinus">−</button><b id="botN" style="min-width:22px;text-align:center">0</b><button id="botPlus">+</button>
+          <span class="muted">(max 8 tanks)</span>
+        </div>
+        <div class="row seg" id="lvlSel"><span style="width:64px">Bot skill:</span>
+          <button data-l="easy">Easy</button><button data-l="normal" class="sel">Normal</button><button data-l="hard">Hard</button>
+        </div>
+        <div class="row"><button class="go" id="playLocal" style="flex:1">Play ▶</button></div>
         <div class="keys" id="keysLocal"></div>
         <div class="muted" id="touchNote" style="margin-top:6px"></div>
       </div>
@@ -103,6 +111,7 @@
 </div>
 
 <script src="game.js"></script>
+<script src="bots.js"></script>
 <script src="client.js"></script>
 </body>
 </html>

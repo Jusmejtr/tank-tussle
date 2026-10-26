@@ -30,17 +30,28 @@ const readKeys = ks => ({ u: pressed(ks.u), d: pressed(ks.d), l: pressed(ks.l), 
 const merge = (a, b) => ({ u: a.u || b.u, d: a.d || b.d, l: a.l || b.l, r: a.r || b.r, f: a.f || b.f });
 
 // ---------- menu ----------
-let nLocal = 2;
+let nLocal = isTouch ? 1 : 2, nBots = isTouch ? 1 : 0, botLevel = 'normal';
+const MAX_TANKS = 8;
 function keysHtml(n) {
   return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
-    + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '');
+    + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '')
+    + (nBots ? `<div><span class="dot" style="background:${COLORS[n]}"></span><b>${nBots} bot${nBots > 1 ? 's' : ''}</b> (${botLevel}) — colours ${COLOR_NAMES_FOR(n, nBots)}</div>` : '')
+    + (n + nBots < 2 ? '<div class="err">Need at least 2 tanks — add a player or a bot.</div>' : '');
 }
+const COLOR_NAMES_FOR = (from, k) => TT.COLOR_NAMES.slice(from, from + k).join(', ');
 function refreshMenu() {
+  nBots = Math.max(0, Math.min(nBots, MAX_TANKS - nLocal));
   document.querySelectorAll('#nSel button[data-n]').forEach(b => b.classList.toggle('sel', +b.dataset.n === nLocal));
+  document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
+  $('botN').textContent = nBots;
   $('keysLocal').innerHTML = keysHtml(nLocal);
-  $('touchNote').textContent = isTouch ? 'On a phone/tablet: 2 players share the screen — Red uses the left stick + FIRE, Green the right.' : '';
+  $('playLocal').disabled = nLocal + nBots < 2;
+  $('touchNote').textContent = isTouch ? 'On a phone/tablet: P1 (Red) gets a stick + FIRE; with 2 humans Red uses the left side, Green the right.' : '';
 }
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
+document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
+$('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
+$('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
 refreshMenu();
 const qs = new URLSearchParams(location.search);
 $('name').value = localStorage.getItem('tt-name') || '';
@@ -58,7 +69,7 @@ let paused = false;
 let net = null;            // online state
 const particles = [];
 
-$('playLocal').onclick = () => startLocal(nLocal);
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel);
 $('create').onclick = () => connect({ t: 'create' });
 $('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
 $('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
@@ -86,14 +97,19 @@ function quit() {
 }
 
 // ---------- local game ----------
-function startLocal(n) {
+let brains = {};
+function startLocal(n, bots = 0, level = 'normal') {
   audioInit();
-  mode = 'local'; game = TT.createGame(); paused = false;
+  mode = 'local'; game = TT.createGame(); paused = false; brains = {};
   for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i });
+  for (let j = 0; j < bots && n + j < MAX_TANKS; j++) {
+    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j });
+    game.players[game.players.length - 1].bot = true; brains[id] = TTBots.newBrain(level);
+  }
   TT.newRound(game); game.events.length = 0;
   show('menu', false); show('menuBtn', true);
-  setupTouch(isTouch ? (n >= 2 ? 'local2' : null) : null);
-  flash(n === 2 ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
+  setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
+  flash(n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
 function localTick(dt) {
@@ -101,7 +117,10 @@ function localTick(dt) {
   acc = Math.min(acc + dt, 0.25);
   while (acc >= 1 / 60) {
     const inputs = {};
-    game.players.forEach((p, i) => { let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, touchIn[i]); inputs[p.id] = k; });
+    game.players.forEach((p, i) => {
+      if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
+      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, touchIn[i]); inputs[p.id] = k;
+    });
     TT.step(game, inputs, 1 / 60); tapped.clear();
     handleEvents(game.events.splice(0), id => game.tanks[id]);
     acc -= 1 / 60;
@@ -254,6 +273,8 @@ function setupTouch(m) {
   if (m === 'local2') {
     touchIn[1] = { u: false, d: false, l: false, r: false, f: false };
     L.append(fireBtn(0, COLORS[0]), joystick(0)); R.append(fireBtn(1, COLORS[1]), joystick(1));
+  } else if (m === 'local1') {
+    L.append(joystick(0)); R.append(fireBtn(0, COLORS[0]));
   } else { // online: stick left, fire right
     const me = () => (net && net.players.find(p => p.id === net.you)) || { color: 0 };
     L.append(joystick(0)); const f = fireBtn(0, COLORS[me().color]); R.append(f); setTimeout(() => (f.style.background = COLORS[me().color]), 1500);
@@ -418,7 +439,7 @@ function render(view, dt) {
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
   ctx.textBaseline = 'middle';
   ps.forEach((p, i) => {
-    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50);
+    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50, slot / 120);
     const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
@@ -432,14 +453,14 @@ function render(view, dt) {
       if (w === 'gatling' || w === 'mine') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
     }
     ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
-    const sub = view.legend ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
-    ctx.fillText(w ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
+    const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
+    ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
 }
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, armed: m.age >= TT.W.MINE_ARM })),
-    legend: game.players.map((p, i) => `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
+    legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 
 // ---------- main loop ----------
