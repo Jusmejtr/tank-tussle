@@ -388,6 +388,16 @@
     k.u = dy < -axis; k.d = dy > axis; k.l = dx < -axis; k.r = dx > axis;
     return k;
   }
+  // 'Point' stick mode: the tank turns toward screen angle `target` the short way and drives forward once it is
+  // roughly facing it (within POINT_DRIVE). It stops turning within `step` (one frame of rotation), so no jitter.
+  // Screen angles = world angles (y points down, -PI/2 = up).
+  const POINT_DRIVE = 40 * Math.PI / 180;
+  function pointKeys(a, target, step = C.TANK_ROT / 60) {
+    const d = wrapA(target - a), k = { u: false, d: false, l: false, r: false };
+    if (Math.abs(d) > step) { if (d > 0) k.r = true; else k.l = true; }
+    if (Math.abs(d) <= POINT_DRIVE) k.u = true;
+    return k;
+  }
 
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
@@ -523,5 +533,5 @@
     };
   }
 
-  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
