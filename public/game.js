@@ -38,11 +38,15 @@
       else if (d === 'U') hw[r][c] = 0; else hw[r + 1][c] = 0;
       seen[nr][nc] = true; stack.push([nc, nr]);
     }
-    // Knock out extra walls so the maze has loops and open areas (like the original)
-    const extra = Math.floor(cols * rows * rand(0.22, 0.35));
-    for (let i = 0, removed = 0; i < extra * 6 && removed < extra; i++) {
-      if (Math.random() < 0.5) { const r = randi(1, rows - 1), c = randi(0, cols - 1); if (rows > 1 && hw[r][c]) { hw[r][c] = 0; removed++; } }
-      else { const r = randi(0, rows - 1), c = randi(1, cols - 1); if (cols > 1 && vw[r][c]) { vw[r][c] = 0; removed++; } }
+    // Knock out only a small fraction (~6-12%) of the remaining interior walls for a few loops.
+    // Starting from a perfect (fully connected) maze, removing walls can never isolate a cell.
+    const interior = [];
+    for (let r = 1; r < rows; r++) for (let c = 0; c < cols; c++) if (hw[r][c]) interior.push(['h', r, c]);
+    for (let r = 0; r < rows; r++) for (let c = 1; c < cols; c++) if (vw[r][c]) interior.push(['v', r, c]);
+    const extra = Math.round(interior.length * rand(0.06, 0.12));
+    for (let i = 0; i < extra && interior.length; i++) {
+      const [k, r, c] = interior.splice(randi(0, interior.length - 1), 1)[0];
+      if (k === 'h') hw[r][c] = 0; else vw[r][c] = 0;
     }
     return { cols, rows, hw, vw };
   }
