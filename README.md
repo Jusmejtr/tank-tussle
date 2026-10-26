@@ -50,4 +50,18 @@ Esc / ☰ opens the menu (the host can end the game and return everyone to the l
 - `public/index.html` – UI/menus.
 - `server.js` – static file server + WebSocket rooms (`/ws`); authoritative 60 Hz simulation, 30 Hz snapshots.
 
-Not done yet: power-ups (laser, gatling, frag, death ray), AI bots.
+## Weapons (crates)
+
+A crate appears every 8–12 s (first one 3–6 s into a round, max 3 on the map). Drive over it with an empty slot to pick it up.
+The tank's turret changes shape so everyone can see what you carry, and the icon shows next to your score.
+
+| Weapon | Turret look | How it works |
+|---|---|---|
+| Gatling | three thin barrels + collar | hold fire: 24 rapid small bullets |
+| Laser | long thin glowing barrel | dashed aim guide while held; fire = instant bouncing beam, kills first tank hit |
+| Frag bomb | stubby wide mortar | fire launches a bomb; fire again to burst into shrapnel (auto-bursts after 3 s) |
+| Death ray | dish emitter | fire = 1 s charge (tank can't drive, can aim), then a long bouncing beam that kills every other tank it touches |
+| Homing missile | launcher tube | follows the maze to the nearest tank (can come back for you after 3 s) |
+| Mines | flat striped box, no barrel | fire drops a mine behind you (3 per crate); arms after 1.5 s and turns almost invisible |
+
+Not done yet: AI bots.

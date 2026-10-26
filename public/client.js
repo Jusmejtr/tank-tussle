@@ -138,7 +138,8 @@ function connect(first) {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2] }])) };
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4] }])),
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], armed: !!x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
@@ -176,13 +177,13 @@ function onlineView() {
   const tanks = [];
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
-    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive) });
+    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
   }
   const bullets = [];
-  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t }); else if (t > 0.5) bullets.push(bb); }
+  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a }); else if (t > 0.5) bullets.push(bb); }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
-  return { maze: net.maze, tanks, bullets, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
+  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
 }
 
 // ---------- effects & sound ----------
@@ -201,6 +202,17 @@ function boom() {
 function handleEvents(evs, tankOf) {
   for (const e of evs) {
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
+    else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
+    else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
+    else if (e.type === 'charge') beep(140, 1.0, 'sine', 0.05, 6);
+    else if (e.type === 'deathray') beep(900, 0.6, 'sawtooth', 0.05, 0.2);
+    else if (e.type === 'missile') beep(300, 0.35, 'triangle', 0.06, 0.5);
+    else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
+    else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
+    else if (e.type === 'burst') {
+      boom();
+      for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
+    }
     else if (e.type === 'die') {
       boom();
       const p = (mode === 'local' ? game.players : net.players).find(p => p.id === e.id);
@@ -258,14 +270,87 @@ function layout(maze) {
   const s = Math.min((W - side * 2) / mw, (H - hud - 16) / mh);
   return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - maze.rows * C.CELL * s) / 2), hud, side };
 }
-function drawTank(x, y, a, color, s = 1) {
+// Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
+function drawTurret(w, color, charge = 0) {
+  const OUT = 'rgba(0,0,0,.6)', DARK = '#333', T = performance.now() / 1000;
+  ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+  const disc = (x, y, r) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); ctx.stroke(); };
+  const box = (x, y, w2, h, fill = color) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.rect(x, y, w2, h); ctx.fill(); ctx.stroke(); };
+  switch (w) {
+    case 'gatling': // three-barrel rotary gun with a collar
+      for (const y of [-4.6, -1, 2.6]) box(2, y, 16, 2, DARK);
+      box(9, -6, 3.5, 12);
+      disc(-1, 0, 6.5);
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-1, 0, 2, 0, 6.283); ctx.fill();
+      break;
+    case 'laser': // thin, long, glowing barrel on a small angular head
+      ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8;
+      box(0, -1.3, 23, 2.6);
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(23, 0, 2.2, 0, 6.283); ctx.fill();
+      ctx.restore();
+      ctx.save(); ctx.translate(-1, 0); ctx.rotate(Math.PI / 4); box(-5, -5, 10, 10); ctx.restore();
+      break;
+    case 'frag': // stubby, wide mortar
+      disc(-3, 0, 5.5);
+      box(1, -7, 12, 14);
+      ctx.fillStyle = DARK; ctx.fillRect(10, -5, 3, 10);
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(4, -7, 2, 14);
+      break;
+    case 'deathray': { // emitter rod + dish
+      box(2, -1.6, 9, 3.2, DARK);
+      ctx.lineWidth = 3.4; ctx.strokeStyle = OUT; ctx.beginPath(); ctx.arc(19, 0, 9, Math.PI * 0.68, Math.PI * 1.32); ctx.stroke();
+      ctx.lineWidth = 2.2; ctx.strokeStyle = color; ctx.beginPath(); ctx.arc(19, 0, 9, Math.PI * 0.68, Math.PI * 1.32); ctx.stroke();
+      ctx.save(); ctx.shadowColor = '#7df'; ctx.shadowBlur = charge > 0 ? 14 : 5;
+      ctx.fillStyle = charge > 0 ? (Math.sin(T * 40) > 0 ? '#fff' : '#7df') : '#9ef'; ctx.beginPath(); ctx.arc(13, 0, charge > 0 ? 3 : 2, 0, 6.283); ctx.fill(); ctx.restore();
+      ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      disc(-1, 0, 6);
+      break;
+    }
+    case 'missile': // launcher tube with the missile nose poking out
+      ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      box(-3, -4.5, 18, 9);
+      ctx.fillStyle = DARK; ctx.fillRect(12.5, -3, 2.5, 6);
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(-3, 1.5, 18, 1.5);
+      break;
+    case 'mine': // flat box, no barrel, hazard stripes
+      box(-8, -7.5, 15, 15);
+      ctx.save(); ctx.beginPath(); ctx.rect(-8, -7.5, 15, 15); ctx.clip(); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 2;
+      for (let k = -16; k < 16; k += 5) { ctx.beginPath(); ctx.moveTo(k - 8, 8); ctx.lineTo(k + 8, -8); ctx.stroke(); }
+      ctx.restore(); ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-0.5, 0, 2.5, 0, 6.283); ctx.fill();
+      break;
+    default: // standard cannon
+      box(1, -2, 15, 4, DARK);
+      disc(-1, 0, 6);
+  }
+}
+function drawTank(x, y, a, color, s = 1, weapon = null, charge = 0) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.scale(s, s);
   ctx.fillStyle = '#3b3b3b'; ctx.fillRect(-13, -12, 25, 6); ctx.fillRect(-13, 6, 25, 6);           // treads
   ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.rect(-11, -8, 21, 16); ctx.fill(); ctx.stroke();                              // hull
-  ctx.fillStyle = '#333'; ctx.fillRect(1, -2, 15, 4);                                                // barrel
-  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(-1, 0, 6, 0, 6.283); ctx.fill(); ctx.stroke();      // turret
+  drawTurret(weapon, color, charge);
   ctx.restore();
+}
+function drawCrate(c) {
+  const bob = Math.sin(performance.now() / 300 + c.id) * 1.2;
+  ctx.save(); ctx.translate(c.x, c.y + bob);
+  ctx.fillStyle = '#fafafa'; ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.rect(-11, -11, 22, 22); ctx.fill(); ctx.stroke();
+  ctx.scale(0.62, 0.62); ctx.translate(-3, 0); drawTurret(c.type, '#8a8a8a');
+  ctx.restore();
+}
+function drawProjectile(b) {
+  const k = b.kind || 'b';
+  if (k === 'missile') {
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a || 0);
+    ctx.fillStyle = Math.random() < 0.5 ? '#f7b733' : '#e8572a'; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-11 - Math.random() * 3, 0); ctx.lineTo(-6, 2); ctx.fill();
+    ctx.fillStyle = '#555'; ctx.fillRect(-6, -2.5, 9, 5); ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
+    ctx.restore(); return;
+  }
+  ctx.fillStyle = k === 'frag' ? '#444' : '#222';
+  ctx.beginPath(); ctx.arc(b.x, b.y, TT.KIND_R[k] || C.BULLET_R, 0, 6.283); ctx.fill();
+  if (k === 'bomb') { ctx.fillStyle = Math.sin(performance.now() / 70) > 0 ? '#f33' : '#600'; ctx.beginPath(); ctx.arc(b.x, b.y, 1.8, 0, 6.283); ctx.fill(); }
 }
 function render(view, dt) {
   const dpr = devicePixelRatio || 1;
@@ -273,7 +358,8 @@ function render(view, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
-  const m = view.maze, L = layout(m), CS = C.CELL;
+  const m = view.maze, L = layout(m), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
+  const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
   ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
   // floor + faint cell grid
   ctx.fillStyle = '#ececec'; ctx.fillRect(0, 0, m.cols * CS, m.rows * CS);
@@ -281,14 +367,45 @@ function render(view, dt) {
   for (let c = 1; c < m.cols; c++) { ctx.moveTo(c * CS, 0); ctx.lineTo(c * CS, m.rows * CS); }
   for (let r = 1; r < m.rows; r++) { ctx.moveTo(0, r * CS); ctx.lineTo(m.cols * CS, r * CS); }
   ctx.stroke();
+  // mines (armed ones are barely visible)
+  for (const mn of view.mines || []) {
+    ctx.globalAlpha = mn.armed ? 0.22 : 1;
+    ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(mn.x, mn.y, 5.5, 0, 6.283); ctx.fill();
+    ctx.fillStyle = mn.armed ? '#333' : (Math.sin(performance.now() / 90) > 0 ? '#f33' : '#900'); ctx.beginPath(); ctx.arc(mn.x, mn.y, 2, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // crates
+  for (const c of view.crates || []) drawCrate(c);
   // walls
   ctx.fillStyle = '#4d4d4d';
-  for (const q of (view.rects || TT.mazeRects(m))) ctx.fillRect(q.x, q.y, q.w, q.h);
+  for (const q of rects) ctx.fillRect(q.x, q.y, q.w, q.h);
+  // laser aim guides
+  for (const t of view.tanks) if (t.alive && t.weapon === 'laser') {
+    const ray = TT.traceRay(rects, t.x + Math.cos(t.a) * 8, t.y + Math.sin(t.a) * 8, t.a, TT.W.LASER_GUIDE, 4);
+    ctx.save(); ctx.strokeStyle = colorOf(t.id); ctx.globalAlpha = 0.55; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]); ctx.lineDashOffset = -performance.now() / 40;
+    ctx.beginPath(); ray.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.stroke(); ctx.restore();
+  }
   // tanks
-  for (const t of view.tanks) if (t.alive) { const p = view.players.find(p => p.id === t.id); drawTank(t.x, t.y, t.a, COLORS[p ? p.color : 0]); }
-  // bullets
-  ctx.fillStyle = '#222';
-  for (const b of view.bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, C.BULLET_R, 0, 6.283); ctx.fill(); }
+  for (const t of view.tanks) if (t.alive) {
+    if (t.charge > 0) { // death ray charging glow
+      const k = 1 - t.charge / TT.W.RAY_CHARGE;
+      ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
+      ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
+    }
+    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+  }
+  // projectiles
+  for (const b of view.bullets) drawProjectile(b);
+  // beams
+  for (const bm of view.beams || []) {
+    const col = colorOf(bm.owner), ray = bm.kind === 'deathray';
+    ctx.save(); ctx.globalAlpha = Math.min(1, bm.life / 0.25); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.shadowColor = ray ? '#7df' : col; ctx.shadowBlur = 12;
+    const path = () => { ctx.beginPath(); bm.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.stroke(); };
+    ctx.strokeStyle = ray ? '#5cf' : col; ctx.lineWidth = ray ? 7 : 3; path();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = ray ? 2.5 : 1; path();
+    ctx.restore();
+  }
   // particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]; p.life -= dt; if (p.life <= 0) { particles.splice(i, 1); continue; }
@@ -296,22 +413,32 @@ function render(view, dt) {
     ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
-  // HUD: scores at the bottom
+  // HUD: scores + current weapon at the bottom
   const ps = view.players, n = ps.length, hy = innerHeight - L.hud / 2 - 4;
-  const slot = Math.min(200, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
+  const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
   ctx.textBaseline = 'middle';
   ps.forEach((p, i) => {
-    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot, sc = Math.min(1.3, L.hud / 50);
-    drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc);
+    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50);
+    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
     ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
+    // weapon icon box next to the score
+    const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
+    ctx.fillStyle = w ? '#fafafa' : 'rgba(255,255,255,.35)'; ctx.strokeStyle = w ? '#555' : '#aaa'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke();
+    if (w) {
+      ctx.save(); ctx.translate(ix - 2 * sc, iy); ctx.scale(0.55 * sc, 0.55 * sc); drawTurret(w, COLORS[p.color]); ctx.restore();
+      if (w === 'gatling' || w === 'mine') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
+    }
     ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
     const sub = view.legend ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
-    ctx.fillText(sub, cx - 6 * sc, hy + 13 * sc);
+    ctx.fillText(w ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
 }
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
+    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, armed: m.age >= TT.W.MINE_ARM })),
     legend: game.players.map((p, i) => `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 
@@ -327,5 +454,5 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down };
+window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down, drawTank, ctx, get paused() { return paused; }, set paused(v) { paused = v; } };
 })();

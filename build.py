@@ -1,0 +1,6 @@
+# Inline public/ into the standalone single-file game (works by double-click, file://)
+s = open('public/index.html').read()
+s = s.replace('<script src="game.js"></script>', '<script>\n' + open('public/game.js').read() + '\n</script>')
+s = s.replace('<script src="client.js"></script>', '<script>\n' + open('public/client.js').read() + '\n</script>')
+open('tank-tussle.html', 'w').write(s)
+print('built tank-tussle.html', len(s))
