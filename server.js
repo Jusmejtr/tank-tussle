@@ -36,15 +36,19 @@ const humans = room => [...room.members.values()].filter(m => !m.bot);
 function freeColor(room) { const used = new Set([...room.members.values()].map(m => m.color)); let c = 0; while (used.has(c)) c++; return c; }
 
 function lobbyMsg(room) {
-  return { t: 'lobby', code: room.code, host: room.hostId, started: !!room.game, level: room.level,
+  return { t: 'lobby', code: room.code, host: room.hostId, started: !!room.game, level: room.level, mode: room.mode, teamScore: room.game ? room.game.teamScore : [0, 0],
     players: room.order.map(id => { const m = room.members.get(id); const p = room.game && room.game.players.find(p => p.id === id);
-      return { id, name: m.name, color: m.color, score: p ? p.score : 0, bot: !!m.bot, online: m.bot || m.connected }; }) };
+      return { id, name: m.name, color: m.color, team: m.team, score: p ? p.score : 0, bot: !!m.bot, online: m.bot || m.connected }; }) };
 }
 function mazeMsg(room) { const m = room.game.maze; return { t: 'maze', round: room.game.round, maze: { cols: m.cols, rows: m.rows, hw: m.hw, vw: m.vw } }; }
 
+// Teams: newcomers join the smaller team (humans first in a tie-break so they spread out); the host can rebalance.
+function smallerTeam(room) { const n = [0, 0]; for (const m of room.members.values()) n[m.team]++; return n[0] <= n[1] ? 0 : 1; }
+function rebalance(room) { const list = room.order.map(id => room.members.get(id)), t = TT.balanceTeams(list); list.forEach((m, i) => (m.team = t[i])); }
 function addMember(room, mb) {
+  if (mb.team !== 0 && mb.team !== 1) mb.team = smallerTeam(room);
   room.members.set(mb.id, mb); room.order.push(mb.id);
-  if (room.game) TT.addPlayer(room.game, { id: mb.id, name: mb.name, colorIndex: mb.color }); // plays from the next round
+  if (room.game) TT.addPlayer(room.game, { id: mb.id, name: mb.name, colorIndex: mb.color, team: mb.team }); // plays from the next round
 }
 function removeMember(room, id) {
   const mb = room.members.get(id); if (!mb) return;
@@ -58,8 +62,8 @@ function removeMember(room, id) {
 
 function startGame(room) {
   stopGame(room);
-  const g = room.game = TT.createGame();
-  for (const id of room.order) { const m = room.members.get(id); TT.addPlayer(g, { id, name: m.name, colorIndex: m.color }); if (m.bot) m.brain = TTBots.newBrain(m.level); }
+  const g = room.game = TT.createGame(); TT.setMode(g, room.mode);
+  for (const id of room.order) { const m = room.members.get(id); TT.addPlayer(g, { id, name: m.name, colorIndex: m.color, team: m.team }); if (m.bot) m.brain = TTBots.newBrain(m.level); }
   TT.newRound(g); g.events.length = 0; debugArm(g);
   broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room));
   let tick = 0, round = g.round;
@@ -107,7 +111,7 @@ wss.on('connection', ws => {
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.t === 'input') { if (me) { const k = m.k || {}; me.input = { u: !!k.u, d: !!k.d, l: !!k.l, r: !!k.r, f: !!k.f }; if (m.s) { me.seq = m.s >>> 0; me.ticks = 0; } } return; }
-    if (m.t === 'create' && !room) { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal' }; rooms.set(r.code, r); join(r, m.name); }
+    if (m.t === 'create' && !room) { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal', mode: 'ffa' }; rooms.set(r.code, r); join(r, m.name); }
     else if (m.t === 'join' && !room) { const r = rooms.get(String(m.code || '').toUpperCase().trim()); if (!r) return send(ws, { t: 'error', msg: 'Room not found.' }); join(r, m.name); }
     else if (m.t === 'rejoin' && !room) {
       const r = rooms.get(String(m.code || '').toUpperCase().trim()), mb = r && [...r.members.values()].find(x => !x.bot && x.token === m.token);
@@ -127,6 +131,14 @@ wss.on('connection', ws => {
     else if (m.t === 'setLevel' && isHost() && LEVELS.includes(m.level)) {
       room.level = m.level; for (const x of room.members.values()) if (x.bot) { x.level = m.level; x.brain = TTBots.newBrain(m.level); }
       broadcast(room, lobbyMsg(room));
+    }
+    else if (m.t === 'setMode' && isHost() && !room.game && (m.mode === 'ffa' || m.mode === 'teams')) {
+      if (m.mode === 'teams' && room.mode !== 'teams') rebalance(room);
+      room.mode = m.mode; broadcast(room, lobbyMsg(room));
+    }
+    else if (m.t === 'setTeam' && room && !room.game) { // anyone can switch themselves; the host can move anyone (e.g. bots)
+      const id = m.id == null ? me.id : m.id >>> 0, x = room.members.get(id);
+      if (x && (id === me.id || isHost())) { x.team = m.team === 0 || m.team === 1 ? m.team : 1 - x.team; broadcast(room, lobbyMsg(room)); }
     }
     else if (m.t === 'leave' && room) { const r = room, id = me.id; room = null; me = null; removeMember(r, id); }
     else if (m.t === 'ping') send(ws, { t: 'pong', c: m.c });

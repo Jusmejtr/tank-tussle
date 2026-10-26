@@ -37,6 +37,11 @@
   #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
   #menuBtn { position: fixed; top: 8px; left: 8px; z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
   #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
+  /* team mode */
+  .teampick { flex-wrap: wrap; gap: 6px; align-items: center; }
+  button.team { padding: 3px 8px; font-size: 12px; border-width: 2px; box-shadow: none; margin-right: 6px; display: inline-flex; align-items: center; gap: 4px; }
+  button.team .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; border: 1px solid rgba(0,0,0,.4); }
+  #plist button.team:disabled { opacity: 1; cursor: default; }
   /* touch controls */
   .pad { position: fixed; top: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; justify-content: space-around; align-items: center; padding: 10px 0; touch-action: none; }
   .pad.left { left: 0; } .pad.right { right: 0; }
@@ -66,6 +71,10 @@
     <div class="cols">
       <div class="col">
         <h2>Same keyboard</h2>
+        <div class="row seg" id="modeSel"><span style="width:64px">Mode:</span>
+          <button data-m="ffa" class="sel">Free-for-all</button><button data-m="teams">Teams</button>
+        </div>
+        <div class="row teampick hidden" id="teamPick"></div>
         <div class="row seg" id="nSel"><span style="width:64px">Players:</span>
           <button data-n="0">0</button><button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
         </div>
@@ -90,7 +99,7 @@
         <div class="keys">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point. <kbd>Esc</kbd> = menu</div>
+    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
@@ -99,6 +108,7 @@
     <h2 style="text-align:center">Room code</h2>
     <div id="roomCode">----</div>
     <div class="row"><input id="link" readonly><button id="copy" style="white-space:nowrap">Copy link</button></div>
+    <div class="row seg hidden" id="modeRow"><span style="width:70px">Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
     <ul id="plist"></ul>
     <div class="row seg hidden" id="botRow"><span style="width:70px">Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted">(max 8 tanks)</span></div>
     <div class="row seg hidden" id="lvlRow"><span style="width:70px">Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>

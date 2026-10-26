@@ -37,6 +37,11 @@
   #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
   #menuBtn { position: fixed; top: 8px; left: 8px; z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
   #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
+  /* team mode */
+  .teampick { flex-wrap: wrap; gap: 6px; align-items: center; }
+  button.team { padding: 3px 8px; font-size: 12px; border-width: 2px; box-shadow: none; margin-right: 6px; display: inline-flex; align-items: center; gap: 4px; }
+  button.team .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; border: 1px solid rgba(0,0,0,.4); }
+  #plist button.team:disabled { opacity: 1; cursor: default; }
   /* touch controls */
   .pad { position: fixed; top: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; justify-content: space-around; align-items: center; padding: 10px 0; touch-action: none; }
   .pad.left { left: 0; } .pad.right { right: 0; }
@@ -66,6 +71,10 @@
     <div class="cols">
       <div class="col">
         <h2>Same keyboard</h2>
+        <div class="row seg" id="modeSel"><span style="width:64px">Mode:</span>
+          <button data-m="ffa" class="sel">Free-for-all</button><button data-m="teams">Teams</button>
+        </div>
+        <div class="row teampick hidden" id="teamPick"></div>
         <div class="row seg" id="nSel"><span style="width:64px">Players:</span>
           <button data-n="0">0</button><button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
         </div>
@@ -90,7 +99,7 @@
         <div class="keys">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point. <kbd>Esc</kbd> = menu</div>
+    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
@@ -99,6 +108,7 @@
     <h2 style="text-align:center">Room code</h2>
     <div id="roomCode">----</div>
     <div class="row"><input id="link" readonly><button id="copy" style="white-space:nowrap">Copy link</button></div>
+    <div class="row seg hidden" id="modeRow"><span style="width:70px">Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
     <ul id="plist"></ul>
     <div class="row seg hidden" id="botRow"><span style="width:70px">Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted">(max 8 tanks)</span></div>
     <div class="row seg hidden" id="lvlRow"><span style="width:70px">Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
@@ -138,6 +148,10 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     TANK_SPEED: 105, TANK_ROT: 3.4, ROUND_END_DELAY: 3,
     OWNER_GRACE: 0.05,
   };
+  // Team mode: two teams, Red (0) and Blue (1). Friendly fire is ON like the original; flip to false to make
+  // teammates' shots (bullets, lasers, frags, mines...) pass through you. Your own shots can always hit you.
+  const FRIENDLY_FIRE = true;
+  const TEAM_COLORS = ['#d8342c', '#2f6fd6'], TEAM_NAMES = ['Red', 'Blue'];
   const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
   const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
 
@@ -264,13 +278,28 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
 
   // ---------- Game ----------
   function createGame() {
-    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [] };
+    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0] };
   }
+  // ---------- teams ----------
+  const teamOf = (g, id) => { const p = g.players.find(p => p.id === id); return p ? p.team : -1; };
+  // true when a and b are different tanks on the same team (only in team mode)
+  const sameTeam = (g, a, b) => g.mode === 'teams' && a !== b && teamOf(g, a) >= 0 && teamOf(g, a) === teamOf(g, b);
+  // Balance: humans alternate Red/Blue, then each bot joins the smaller team. `list` = [{bot}], returns team per entry.
+  function balanceTeams(list) {
+    const out = [], n = [0, 0]; let h = 0;
+    list.forEach((x, i) => { if (!x.bot) { out[i] = h++ % 2; n[out[i]]++; } });
+    list.forEach((x, i) => { if (x.bot) { out[i] = n[0] <= n[1] ? 0 : 1; n[out[i]]++; } });
+    return out;
+  }
+  function setMode(g, mode) { g.mode = mode === 'teams' ? 'teams' : 'ffa'; }
+  function setTeam(g, id, team) { const p = g.players.find(p => p.id === id); if (p) p.team = team ? 1 : 0; }
   function addPlayer(g, p) {
     const used = new Set(g.players.map(q => q.color));
     let ci = p.colorIndex;
     if (ci == null || used.has(ci)) { ci = 0; while (used.has(ci)) ci++; }
-    const pl = { id: p.id, name: p.name || COLOR_NAMES[ci], color: ci, score: 0 };
+    let team = p.team;
+    if (team !== 0 && team !== 1) { const n = [0, 1].map(k => g.players.filter(q => q.team === k).length); team = n[0] <= n[1] ? 0 : 1; }
+    const pl = { id: p.id, name: p.name || COLOR_NAMES[ci], color: ci, score: 0, team };
     g.players.push(pl);
     return pl;
   }
@@ -345,9 +374,11 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   }
 
   function kill(g, t, by, cause) {
-    if (!t.alive) return;
+    if (!t.alive) return false;
+    if (!FRIENDLY_FIRE && sameTeam(g, t.id, by)) return false;
     t.alive = false;
     g.events.push({ type: 'die', id: t.id, x: t.x, y: t.y, by, cause });
+    return true;
   }
   function spawnProjectile(g, t, kind, speed, extra) {
     const a = t.a + (extra && extra.spread ? rand(-extra.spread, extra.spread) : 0);
@@ -367,10 +398,11 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   function deathRayPath(g, t, a) {
     const Wd = g.maze.cols * C.CELL, Hd = g.maze.rows * C.CELL, step = 2;
     let x = t.x + Math.cos(a) * 8, y = t.y + Math.sin(a) * 8;
-    const pts = [[x, y]], hits = [], foes = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+    const pts = [[x, y]], hits = [], foes = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id && (FRIENDLY_FIRE || !sameTeam(g, o.id, t.id)));
+    const bendTo = foes.filter(o => !sameTeam(g, o.id, t.id)); // the ray only bends towards enemies
     for (let d = 0; d < W.RAY_LEN; d += step) {
       let best = null, bd = 1e9;
-      for (const o of foes) {
+      for (const o of bendTo) {
         if (hits.includes(o.id)) continue;
         const dist = Math.hypot(o.x - x, o.y - y), off = wrapA(Math.atan2(o.y - y, o.x - x) - a);
         if (Math.abs(off) < W.RAY_CONE && dist < bd) { bd = dist; best = off; }
@@ -397,7 +429,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         let hitAny = false;
         for (const o of Object.values(g.tanks)) {
           if (!o.alive || (o.id === t.id && d < 30)) continue;
-          if (Math.hypot(o.x - x, o.y - y) < C.TANK_R) { kill(g, o, t.id, kind); hitAny = true; }
+          if (Math.hypot(o.x - x, o.y - y) < C.TANK_R && kill(g, o, t.id, kind)) hitAny = true;
         }
         if (hitAny) { // laser stops at first victim
           cut = ray.pts.filter(p => p[2] < d); cut.push([x, y]); break;
@@ -557,7 +589,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         if (!t.alive) continue;
         if (t.id === b.owner && b.age < (b.grace != null ? b.grace : C.OWNER_GRACE)) continue;
         const dx = t.x - b.x, dy = t.y - b.y, r = C.TANK_R + b.r - 1;
-        if (dx * dx + dy * dy < r * r) { kill(g, t, b.owner, b.kind); hit = true; break; }
+        if (dx * dx + dy * dy < r * r && (FRIENDLY_FIRE || !sameTeam(g, t.id, b.owner))) { kill(g, t, b.owner, b.kind); hit = true; break; }
       }
       if (hit && b.kind === 'bomb') burstFrag(g, b);
       if (!hit) keep.push(b);
@@ -586,13 +618,20 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     // round flow
     const alive = tanks.filter(t => t.alive);
     if (g.phase === 'play') {
-      const over = g.players.length >= 2 ? alive.length <= 1 : alive.length === 0;
+      let over;
+      if (g.mode === 'teams') { // over when only one team has tanks left (or nobody, if only one team is playing)
+        const playing = new Set(tanks.map(t => teamOf(g, t.id))), left = new Set(alive.map(t => teamOf(g, t.id)));
+        over = playing.size >= 2 ? left.size <= 1 : alive.length === 0;
+      } else over = g.players.length >= 2 ? alive.length <= 1 : alive.length === 0;
       if (over && tanks.length) { g.phase = 'ending'; g.endTimer = C.ROUND_END_DELAY; }
     } else if (g.phase === 'ending') {
       g.endTimer -= dt;
       if (g.endTimer <= 0) {
         const still = Object.values(g.tanks).filter(t => t.alive);
-        if (still.length === 1 && g.players.length >= 2) {
+        if (g.mode === 'teams') {
+          const left = [...new Set(still.map(t => teamOf(g, t.id)))], playing = new Set(Object.keys(g.tanks).map(id => teamOf(g, +id)));
+          if (left.length === 1 && left[0] >= 0 && playing.size >= 2) { g.teamScore[left[0]]++; g.events.push({ type: 'point', team: left[0] }); }
+        } else if (still.length === 1 && g.players.length >= 2) {
           const p = g.players.find(p => p.id === still[0].id); if (p) { p.score++; g.events.push({ type: 'point', id: p.id }); }
         }
         newRound(g);
@@ -617,11 +656,12 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
-      sc: g.players.map(p => [p.id, p.score]),
+      sc: g.players.map(p => [p.id, p.score, p.team]),
+      md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -672,11 +712,16 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       for (const o of Object.values(g.tanks)) {
         if (!o.alive) continue;
         if (o.id === t.id) { if (ignoreSelf || d < C.TANK_R + 10) continue; if (Math.hypot(o.x - x, o.y - y) < C.TANK_R + 6) return hitEnemy ? 'risky' : 'self'; continue; }
-        if (!hitEnemy && Math.hypot(o.x - x, o.y - y) < C.TANK_R + 2) hitEnemy = true; // keep scanning: if we miss, does it come back at us?
+        if (!hitEnemy && Math.hypot(o.x - x, o.y - y) < C.TANK_R + 2) {
+          if (!isEnemy(g, t, o)) { if (TT.FRIENDLY_FIRE) return 'mate'; continue; } // a teammate is in the way: hold fire
+          hitEnemy = true; // keep scanning: if we miss, does it come back at us?
+        }
       }
     }
     return hitEnemy ? 'enemy' : null;
   }
+  // Team mode: teammates are never targets or threats; friendly fire only matters for "don't shoot them".
+  const isEnemy = (g, t, o) => o.alive && o.id !== t.id && !(TT.sameTeam && TT.sameTeam(g, t.id, o.id));
   function clearLine(g, x0, y0, x1, y1) {
     const d = Math.hypot(x1 - x0, y1 - y0), n = Math.ceil(d / 6);
     for (let i = 1; i < n; i++) { const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n; if (g.rects.some(q => TT.circleHitsRect(x, y, 2, q))) return false; }
@@ -687,6 +732,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     for (const b of g.bullets) {
       if (Math.hypot(b.x - t.x, b.y - t.y) > 170) continue;
       if (b.owner === t.id && b.age < 0.25) continue;
+      if (!TT.FRIENDLY_FIRE && TT.sameTeam(g, t.id, b.owner)) continue; // teammates' shots pass through us
       const p = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, r: b.r };
       for (let s = 0; s < 8; s++) {
         TT.moveBullet(p, Math.hypot(p.vx, p.vy) * 0.08, g.rects);
@@ -709,7 +755,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     if (rc) { // our tank is frozen: steer the RC missile through the maze towards the nearest enemy
       br.lastPos = [t.x, t.y]; br.stuckT = 0;
       let tgt = null, bd = 1e9;
-      for (const o of Object.values(g.tanks)) if (o.alive && o.id !== t.id) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
+      for (const o of Object.values(g.tanks)) if (isEnemy(g, t, o)) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
       if (tgt) {
         const [wx, wy] = TT.nextWaypoint(g, rc.x, rc.y, tgt.x, tgt.y), d = wrap(Math.atan2(wy - rc.y, wx - rc.x) - Math.atan2(rc.vy, rc.vx));
         if (d > 0.08) k.r = true; else if (d < -0.08) k.l = true;
@@ -724,7 +770,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     if (br.next <= 0) { // ---- decision tick (reaction time) ----
       br.next = L.react * (0.7 + Math.random() * 0.6);
       const m = g.maze, [c0, r0] = cellOf(g, t.x, t.y), startK = r0 * m.cols + c0, field = bfs(m, c0, r0);
-      const enemies = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+      const enemies = Object.values(g.tanks).filter(o => isEnemy(g, t, o));
+      const mates = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id && !isEnemy(g, t, o));
       let target = null, td = 1e9;
       for (const o of enemies) { const [c, r] = cellOf(g, o.x, o.y), d = field.dist[r * m.cols + c]; const dd = (d < 0 ? 99 : d) + Math.hypot(o.x - t.x, o.y - t.y) / 1000; if (dd < td) { td = dd; target = o; } }
       // crate if we have no weapon and one is reasonably close
@@ -750,20 +797,21 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         }
         // firing decision by weapon
         const w = t.weapon;
-        const now = w === 'deathray' ? (TT.deathRayPath(g, t, t.a).hits.length ? 'enemy' : null)
+        const now = w === 'deathray' ? (h => h.some(id => mates.some(o => o.id === id)) ? 'mate' : h.length ? 'enemy' : null)(TT.deathRayPath(g, t, t.a).hits)
           : rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : L.rayLen, w === 'laser' ? 9 : L.bounces, false);
         if (br.cool <= 0) {
           if (!w || w === 'gatling') plan.fire = now === 'enemy' || (now === 'risky' && Math.random() < 0.2);
           else if (w === 'laser' || w === 'deathray') plan.fire = now === 'enemy' || now === 'risky';
-          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self';
+          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self' && now !== 'mate';
           else if (w === 'frag') {
             const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
-            if (bomb) plan.fire = enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90);
-            else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self';
+            const mateNear = bomb && mates.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 90);
+            if (bomb) plan.fire = !mateNear && (enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90));
+            else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self' && now !== 'mate';
           }
-          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && now !== 'mate' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
           else if (w === 'rc') plan.fire = !t.rcId && td < 8 && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
-          else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5;
+          else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5 && !mates.some(o => Math.hypot(o.x - t.x, o.y - t.y) < 90);
         }
         if (w === 'deathray' && t.charge > 0) plan.move = false;
       }
@@ -845,6 +893,13 @@ const merge = (a, b) => ({ u: a.u || b.u, d: a.d || b.d, l: a.l || b.l, r: a.r |
 
 // ---------- menu ----------
 let nLocal = isTouch ? 1 : 2, nBots = isTouch ? 1 : 0, botLevel = 'normal';
+let localMode = 'ffa', localTeams = [], teamsFor = '';  // Teams: localTeams[i] = 0 Red / 1 Blue for tank i (humans then bots)
+const TEAM_COLORS = TT.TEAM_COLORS, TEAM_NAMES = TT.TEAM_NAMES;
+function teamBadges() {
+  const key = nLocal + '/' + nBots;
+  if (teamsFor !== key) { localTeams = TT.balanceTeams([...Array(nLocal).fill({ bot: false }), ...Array(nBots).fill({ bot: true })]); teamsFor = key; }
+  return localTeams.map((t, i) => `<button class="team" data-i="${i}" title="Tap to switch team" style="border-color:${TEAM_COLORS[t]}"><span class="dot" style="background:${COLORS[i]}"></span>${i < nLocal ? 'P' + (i + 1) : 'Bot ' + (i - nLocal + 1)} <b style="color:${TEAM_COLORS[t]}">${TEAM_NAMES[t]}</b></button>`).join('');
+}
 const MAX_TANKS = 8;
 function keysHtml(n) {
   return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
@@ -858,12 +913,17 @@ function refreshMenu() {
   document.querySelectorAll('#nSel button[data-n]').forEach(b => b.classList.toggle('sel', +b.dataset.n === nLocal));
   document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
   $('botN').textContent = nBots;
+  document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.classList.toggle('sel', b.dataset.m === localMode));
+  show('teamPick', localMode === 'teams');
+  if (localMode === 'teams') { $('teamPick').innerHTML = '<span class="muted">Tap to switch team:</span> ' + teamBadges();
+    $('teamPick').querySelectorAll('button.team').forEach(b => b.onclick = () => { localTeams[+b.dataset.i] ^= 1; refreshMenu(); }); }
   $('keysLocal').innerHTML = keysHtml(nLocal);
   $('playLocal').disabled = nLocal + nBots < 2;
   $('touchNote').textContent = isTouch ? 'On a phone/tablet: P1 (Red) gets a stick + FIRE; with 2 humans Red uses the left side, Green the right.' : '';
 }
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
 document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
+document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.onclick = () => { localMode = b.dataset.m; refreshMenu(); });
 $('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
 $('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
 refreshMenu();
@@ -883,7 +943,7 @@ let paused = false;
 let net = null;            // online state
 const particles = [];
 
-$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel);
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null);
 $('create').onclick = () => connect({ t: 'create' });
 $('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
 $('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
@@ -896,6 +956,9 @@ $('copy').onclick = () => { const l = $('link'); l.select(); (navigator.clipboar
 $('start').onclick = () => net && net.send({ t: 'start' });
 $('lbPlus').onclick = () => net && net.send({ t: 'addBot' });
 $('lbMinus').onclick = () => net && net.send({ t: 'removeBot' });
+document.querySelectorAll('#modeRow button[data-m]').forEach(b => b.onclick = () => net && net.send({ t: 'setMode', mode: b.dataset.m }));
+$('switchTeam').onclick = () => net && net.send({ t: 'setTeam' });
+$('plist').addEventListener('click', e => { const b = e.target.closest('[data-team-id]'); if (b && net) net.send({ t: 'setTeam', id: +b.dataset.teamId }); });
 document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
 if ($('server')) { $('server').value = new URLSearchParams(location.search).get('server') || window.TT_SERVER_URL || (/^https?:$/.test(location.protocol) && !window.TT_STATIC ? '' : localStorage.getItem('tt-server') || ''); }
 
@@ -916,18 +979,21 @@ function quit(keepErr) {
 
 // ---------- local game ----------
 let brains = {};
-function startLocal(n, bots = 0, level = 'normal') {
+// teams: null = free-for-all, true = auto-balanced teams, or an array of 0/1 per tank (humans first, then bots)
+function startLocal(n, bots = 0, level = 'normal', teams = null) {
   audioInit();
   mode = 'local'; game = TT.createGame(); paused = false; brains = {};
-  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i });
+  if (teams) { TT.setMode(game, 'teams'); if (!Array.isArray(teams)) teams = TT.balanceTeams([...Array(n).fill({ bot: false }), ...Array(bots).fill({ bot: true })]); }
+  const team = i => (teams ? teams[i] : undefined);
+  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i, team: team(i) });
   for (let j = 0; j < bots && n + j < MAX_TANKS; j++) {
-    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j });
+    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j, team: team(n + j) });
     game.players[game.players.length - 1].bot = true; brains[id] = TTBots.newBrain(level);
   }
   TT.newRound(game); game.events.length = 0;
   show('menu', false); show('menuBtn', true);
   setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
-  flash(n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
+  flash(teams ? 'Teams: Red vs Blue — last team standing scores!' : n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
 function localTick(dt) {
@@ -999,7 +1065,7 @@ function openSocket(me, firstMsg) {
       history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
       show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
     } else if (m.t === 'lobby') {
-      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level;
+      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
       if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
       me.started = m.started; renderLobby();
     } else if (m.t === 'maze') {
@@ -1012,7 +1078,8 @@ function openSocket(me, firstMsg) {
         crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
-      for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
+      for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
+      if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
     }
   };
@@ -1021,9 +1088,11 @@ function renderLobby() {
   if (!net) return;
   $('roomCode').textContent = net.code;
   $('link').value = shareLink(net.code);
-  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
+  const host = net.you === net.host, teams = net.mode === 'teams';
+  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${teams ? `<button class="team"${p.id === net.you || host ? ` data-team-id="${p.id}" title="Switch team"` : ' disabled'} style="border-color:${TEAM_COLORS[p.team]};color:${TEAM_COLORS[p.team]}">${TEAM_NAMES[p.team]}</button>` : ''}${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
     + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
-  const host = net.you === net.host;
+  show('modeRow', true); document.querySelectorAll('#modeRow button[data-m]').forEach(b => { b.classList.toggle('sel', b.dataset.m === net.mode); b.disabled = !host; });
+  show('switchTeam', teams);
   show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
   $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
   document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
@@ -1099,7 +1168,8 @@ function onlineView(dt) {
   for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
-  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
+  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
+    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0] };
 }
 
 // ---------- effects & sound ----------
@@ -1117,6 +1187,7 @@ function boom() {
 }
 function handleEvents(evs, tankOf) {
   for (const e of evs) {
+    if (e.type === 'point' && e.team != null) { flash(`${TT.TEAM_NAMES[e.team]} team scores!`, 1800); beep(880, 0.15, 'triangle', 0.06, 1.3); }
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
     else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
@@ -1155,7 +1226,7 @@ function stickInput(s, tankAngle, dt) {
 const sticks = [];
 function joystick(idx) {
   const el = document.createElement('div'); el.className = 'joy'; el.innerHTML = '<div class="knob"></div>';
-  const knob = el.firstChild; let pid = null;
+  const knob = el.firstChild; let pid = null, downAt = 0;
   const upd = e => {
     // Measured fresh every move, in the same viewport (screen) pixels the canvas is drawn in, so the centre and
     // size are right after any resize or rotation. Up on screen is always up in the maze.
@@ -1165,8 +1236,8 @@ function joystick(idx) {
     const s = touchIn[idx]; if (!s) return;
     s.on = m > STICK_DEAD; if (s.on) s.ang = Math.atan2(dy, dx);
   };
-  const reset = () => { pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; try { el.setPointerCapture(pid); } catch {} upd(e); });
+  const reset = (before = Infinity) => { if (pid != null && downAt > before) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; downAt = performance.now(); try { el.setPointerCapture(pid); } catch {} upd(e); });
   el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
   const end = e => { if (e.pointerId === pid) reset(); };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
@@ -1174,15 +1245,17 @@ function joystick(idx) {
   return el;
 }
 // Rotating the phone (or any resize) can swallow the finger's pointerup; drop stale touches so nothing stays stuck.
-function resetTouch() {
-  sticks.forEach(f => f()); touchIn.forEach(s => s && Object.assign(s, blankPad()));
+// `before`: only drop touches that started before this time (a late resize must not kill a fresh touch).
+function resetTouch(before = Infinity) {
+  sticks.forEach(f => f(before)); if (before !== Infinity) return;
+  touchIn.forEach(s => s && Object.assign(s, blankPad()));
   document.querySelectorAll('.fire.on').forEach(e => e.classList.remove('on'));
 }
 let lastOrient = null;
 function onViewport() {
   const o = innerWidth >= innerHeight ? 'land' : 'port';
   document.body.classList.toggle('portrait', o === 'port');
-  if (o !== lastOrient) { if (lastOrient) resetTouch(); lastOrient = o; }
+  if (o !== lastOrient) { if (lastOrient) resetTouch(performance.now() - 250); lastOrient = o; }
 }
 addEventListener('resize', onViewport); addEventListener('orientationchange', () => { resetTouch(); onViewport(); });
 if (screen.orientation) screen.orientation.addEventListener('change', () => { resetTouch(); onViewport(); });
@@ -1213,14 +1286,15 @@ function setupTouch(m) {
 }
 
 // ---------- rendering ----------
+let teamBar = false; // team mode: a team-score strip across the top
 function layout(maze) {
-  const W = innerWidth, H = innerHeight;
+  const W = innerWidth, H = innerHeight, top = teamBar ? 34 : 0;
   const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
   const side = padMode && !port ? Math.min(180, Math.max(120, W * 0.19)) : 10;
   const hud = Math.max(44, Math.min(70, H * 0.12)), bot = padMode && port ? 160 : 0;
   const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
-  const s = Math.min((W - side * 2) / mw, (H - hud - bot - 16) / mh);
-  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - bot - maze.rows * C.CELL * s) / 2), hud, side, bot };
+  const s = Math.min((W - side * 2) / mw, (H - hud - bot - top - 16) / mh);
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: top + Math.max(8, (H - hud - bot - top - maze.rows * C.CELL * s) / 2), hud, side, bot, top };
 }
 // Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
 function drawTurret(w, color, charge = 0) {
@@ -1368,6 +1442,8 @@ function render(view, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
+  teamBar = !!view.teams;
+  const teamOfId = id => { const p = view.players.find(p => p.id === id); return p && p.team != null ? p.team : 0; };
   const m = view.maze, L = layout(m), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
   const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
   ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
@@ -1403,6 +1479,7 @@ function render(view, dt) {
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
     }
+    if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
   }
   // projectiles
@@ -1424,6 +1501,7 @@ function render(view, dt) {
     ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
+  if (view.teams) drawTeamBar(view);
   // HUD: scores + current weapon at the bottom
   const ps = view.players, n = ps.length, hy = innerHeight - L.bot - L.hud / 2 - 4;
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
@@ -1431,9 +1509,12 @@ function render(view, dt) {
   ps.forEach((p, i) => {
     const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50, slot / 120);
     const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    if (view.teams) teamRing(cx - 26 * sc, hy, TEAM_COLORS[p.team || 0], sc);
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
-    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
+    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`;
+    if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
+    else ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
@@ -1447,9 +1528,25 @@ function render(view, dt) {
     ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
 }
+// Team colour ring under a tank (team mode): each tank keeps its own colour, the ring shows its team.
+function teamRing(x, y, col, s) {
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 3.5 * s; ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(x, y, (C.TANK_R + 6) * s, 0, 6.283); ctx.stroke();
+  ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.fill(); ctx.restore();
+}
+function drawTeamBar(view) {
+  const ts = view.teamScore || [0, 0], y = 20, cx = innerWidth / 2;
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = 'bold 20px Verdana, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cx - 120, y - 15, 240, 30);
+  ctx.textAlign = 'right'; ctx.fillStyle = TEAM_COLORS[0]; ctx.fillText(`RED ${ts[0]}`, cx - 12, y);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText(':', cx, y);
+  ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + 12, y);
+  ctx.restore();
+}
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
+    teams: game.mode === 'teams', teamScore: game.teamScore,
     legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 

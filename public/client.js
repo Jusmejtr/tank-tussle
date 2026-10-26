@@ -31,6 +31,13 @@ const merge = (a, b) => ({ u: a.u || b.u, d: a.d || b.d, l: a.l || b.l, r: a.r |
 
 // ---------- menu ----------
 let nLocal = isTouch ? 1 : 2, nBots = isTouch ? 1 : 0, botLevel = 'normal';
+let localMode = 'ffa', localTeams = [], teamsFor = '';  // Teams: localTeams[i] = 0 Red / 1 Blue for tank i (humans then bots)
+const TEAM_COLORS = TT.TEAM_COLORS, TEAM_NAMES = TT.TEAM_NAMES;
+function teamBadges() {
+  const key = nLocal + '/' + nBots;
+  if (teamsFor !== key) { localTeams = TT.balanceTeams([...Array(nLocal).fill({ bot: false }), ...Array(nBots).fill({ bot: true })]); teamsFor = key; }
+  return localTeams.map((t, i) => `<button class="team" data-i="${i}" title="Tap to switch team" style="border-color:${TEAM_COLORS[t]}"><span class="dot" style="background:${COLORS[i]}"></span>${i < nLocal ? 'P' + (i + 1) : 'Bot ' + (i - nLocal + 1)} <b style="color:${TEAM_COLORS[t]}">${TEAM_NAMES[t]}</b></button>`).join('');
+}
 const MAX_TANKS = 8;
 function keysHtml(n) {
   return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
@@ -44,12 +51,17 @@ function refreshMenu() {
   document.querySelectorAll('#nSel button[data-n]').forEach(b => b.classList.toggle('sel', +b.dataset.n === nLocal));
   document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
   $('botN').textContent = nBots;
+  document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.classList.toggle('sel', b.dataset.m === localMode));
+  show('teamPick', localMode === 'teams');
+  if (localMode === 'teams') { $('teamPick').innerHTML = '<span class="muted">Tap to switch team:</span> ' + teamBadges();
+    $('teamPick').querySelectorAll('button.team').forEach(b => b.onclick = () => { localTeams[+b.dataset.i] ^= 1; refreshMenu(); }); }
   $('keysLocal').innerHTML = keysHtml(nLocal);
   $('playLocal').disabled = nLocal + nBots < 2;
   $('touchNote').textContent = isTouch ? 'On a phone/tablet: P1 (Red) gets a stick + FIRE; with 2 humans Red uses the left side, Green the right.' : '';
 }
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
 document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
+document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.onclick = () => { localMode = b.dataset.m; refreshMenu(); });
 $('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
 $('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
 refreshMenu();
@@ -69,7 +81,7 @@ let paused = false;
 let net = null;            // online state
 const particles = [];
 
-$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel);
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null);
 $('create').onclick = () => connect({ t: 'create' });
 $('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
 $('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
@@ -82,6 +94,9 @@ $('copy').onclick = () => { const l = $('link'); l.select(); (navigator.clipboar
 $('start').onclick = () => net && net.send({ t: 'start' });
 $('lbPlus').onclick = () => net && net.send({ t: 'addBot' });
 $('lbMinus').onclick = () => net && net.send({ t: 'removeBot' });
+document.querySelectorAll('#modeRow button[data-m]').forEach(b => b.onclick = () => net && net.send({ t: 'setMode', mode: b.dataset.m }));
+$('switchTeam').onclick = () => net && net.send({ t: 'setTeam' });
+$('plist').addEventListener('click', e => { const b = e.target.closest('[data-team-id]'); if (b && net) net.send({ t: 'setTeam', id: +b.dataset.teamId }); });
 document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
 if ($('server')) { $('server').value = new URLSearchParams(location.search).get('server') || window.TT_SERVER_URL || (/^https?:$/.test(location.protocol) && !window.TT_STATIC ? '' : localStorage.getItem('tt-server') || ''); }
 
@@ -102,18 +117,21 @@ function quit(keepErr) {
 
 // ---------- local game ----------
 let brains = {};
-function startLocal(n, bots = 0, level = 'normal') {
+// teams: null = free-for-all, true = auto-balanced teams, or an array of 0/1 per tank (humans first, then bots)
+function startLocal(n, bots = 0, level = 'normal', teams = null) {
   audioInit();
   mode = 'local'; game = TT.createGame(); paused = false; brains = {};
-  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i });
+  if (teams) { TT.setMode(game, 'teams'); if (!Array.isArray(teams)) teams = TT.balanceTeams([...Array(n).fill({ bot: false }), ...Array(bots).fill({ bot: true })]); }
+  const team = i => (teams ? teams[i] : undefined);
+  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i, team: team(i) });
   for (let j = 0; j < bots && n + j < MAX_TANKS; j++) {
-    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j });
+    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j, team: team(n + j) });
     game.players[game.players.length - 1].bot = true; brains[id] = TTBots.newBrain(level);
   }
   TT.newRound(game); game.events.length = 0;
   show('menu', false); show('menuBtn', true);
   setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
-  flash(n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
+  flash(teams ? 'Teams: Red vs Blue — last team standing scores!' : n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
 function localTick(dt) {
@@ -185,7 +203,7 @@ function openSocket(me, firstMsg) {
       history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
       show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
     } else if (m.t === 'lobby') {
-      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level;
+      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
       if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
       me.started = m.started; renderLobby();
     } else if (m.t === 'maze') {
@@ -198,7 +216,8 @@ function openSocket(me, firstMsg) {
         crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
-      for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
+      for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
+      if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
     }
   };
@@ -207,9 +226,11 @@ function renderLobby() {
   if (!net) return;
   $('roomCode').textContent = net.code;
   $('link').value = shareLink(net.code);
-  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
+  const host = net.you === net.host, teams = net.mode === 'teams';
+  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${teams ? `<button class="team"${p.id === net.you || host ? ` data-team-id="${p.id}" title="Switch team"` : ' disabled'} style="border-color:${TEAM_COLORS[p.team]};color:${TEAM_COLORS[p.team]}">${TEAM_NAMES[p.team]}</button>` : ''}${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
     + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
-  const host = net.you === net.host;
+  show('modeRow', true); document.querySelectorAll('#modeRow button[data-m]').forEach(b => { b.classList.toggle('sel', b.dataset.m === net.mode); b.disabled = !host; });
+  show('switchTeam', teams);
   show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
   $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
   document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
@@ -285,7 +306,8 @@ function onlineView(dt) {
   for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
-  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
+  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
+    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0] };
 }
 
 // ---------- effects & sound ----------
@@ -303,6 +325,7 @@ function boom() {
 }
 function handleEvents(evs, tankOf) {
   for (const e of evs) {
+    if (e.type === 'point' && e.team != null) { flash(`${TT.TEAM_NAMES[e.team]} team scores!`, 1800); beep(880, 0.15, 'triangle', 0.06, 1.3); }
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
     else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
@@ -341,7 +364,7 @@ function stickInput(s, tankAngle, dt) {
 const sticks = [];
 function joystick(idx) {
   const el = document.createElement('div'); el.className = 'joy'; el.innerHTML = '<div class="knob"></div>';
-  const knob = el.firstChild; let pid = null;
+  const knob = el.firstChild; let pid = null, downAt = 0;
   const upd = e => {
     // Measured fresh every move, in the same viewport (screen) pixels the canvas is drawn in, so the centre and
     // size are right after any resize or rotation. Up on screen is always up in the maze.
@@ -351,8 +374,8 @@ function joystick(idx) {
     const s = touchIn[idx]; if (!s) return;
     s.on = m > STICK_DEAD; if (s.on) s.ang = Math.atan2(dy, dx);
   };
-  const reset = () => { pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; try { el.setPointerCapture(pid); } catch {} upd(e); });
+  const reset = (before = Infinity) => { if (pid != null && downAt > before) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; downAt = performance.now(); try { el.setPointerCapture(pid); } catch {} upd(e); });
   el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
   const end = e => { if (e.pointerId === pid) reset(); };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
@@ -360,15 +383,17 @@ function joystick(idx) {
   return el;
 }
 // Rotating the phone (or any resize) can swallow the finger's pointerup; drop stale touches so nothing stays stuck.
-function resetTouch() {
-  sticks.forEach(f => f()); touchIn.forEach(s => s && Object.assign(s, blankPad()));
+// `before`: only drop touches that started before this time (a late resize must not kill a fresh touch).
+function resetTouch(before = Infinity) {
+  sticks.forEach(f => f(before)); if (before !== Infinity) return;
+  touchIn.forEach(s => s && Object.assign(s, blankPad()));
   document.querySelectorAll('.fire.on').forEach(e => e.classList.remove('on'));
 }
 let lastOrient = null;
 function onViewport() {
   const o = innerWidth >= innerHeight ? 'land' : 'port';
   document.body.classList.toggle('portrait', o === 'port');
-  if (o !== lastOrient) { if (lastOrient) resetTouch(); lastOrient = o; }
+  if (o !== lastOrient) { if (lastOrient) resetTouch(performance.now() - 250); lastOrient = o; }
 }
 addEventListener('resize', onViewport); addEventListener('orientationchange', () => { resetTouch(); onViewport(); });
 if (screen.orientation) screen.orientation.addEventListener('change', () => { resetTouch(); onViewport(); });
@@ -399,14 +424,15 @@ function setupTouch(m) {
 }
 
 // ---------- rendering ----------
+let teamBar = false; // team mode: a team-score strip across the top
 function layout(maze) {
-  const W = innerWidth, H = innerHeight;
+  const W = innerWidth, H = innerHeight, top = teamBar ? 34 : 0;
   const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
   const side = padMode && !port ? Math.min(180, Math.max(120, W * 0.19)) : 10;
   const hud = Math.max(44, Math.min(70, H * 0.12)), bot = padMode && port ? 160 : 0;
   const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
-  const s = Math.min((W - side * 2) / mw, (H - hud - bot - 16) / mh);
-  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - bot - maze.rows * C.CELL * s) / 2), hud, side, bot };
+  const s = Math.min((W - side * 2) / mw, (H - hud - bot - top - 16) / mh);
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: top + Math.max(8, (H - hud - bot - top - maze.rows * C.CELL * s) / 2), hud, side, bot, top };
 }
 // Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
 function drawTurret(w, color, charge = 0) {
@@ -554,6 +580,8 @@ function render(view, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
+  teamBar = !!view.teams;
+  const teamOfId = id => { const p = view.players.find(p => p.id === id); return p && p.team != null ? p.team : 0; };
   const m = view.maze, L = layout(m), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
   const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
   ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
@@ -589,6 +617,7 @@ function render(view, dt) {
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
     }
+    if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
   }
   // projectiles
@@ -610,6 +639,7 @@ function render(view, dt) {
     ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
+  if (view.teams) drawTeamBar(view);
   // HUD: scores + current weapon at the bottom
   const ps = view.players, n = ps.length, hy = innerHeight - L.bot - L.hud / 2 - 4;
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
@@ -617,9 +647,12 @@ function render(view, dt) {
   ps.forEach((p, i) => {
     const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50, slot / 120);
     const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    if (view.teams) teamRing(cx - 26 * sc, hy, TEAM_COLORS[p.team || 0], sc);
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
-    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
+    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`;
+    if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
+    else ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
@@ -633,9 +666,25 @@ function render(view, dt) {
     ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
 }
+// Team colour ring under a tank (team mode): each tank keeps its own colour, the ring shows its team.
+function teamRing(x, y, col, s) {
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 3.5 * s; ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(x, y, (C.TANK_R + 6) * s, 0, 6.283); ctx.stroke();
+  ctx.globalAlpha = 0.18; ctx.fillStyle = col; ctx.fill(); ctx.restore();
+}
+function drawTeamBar(view) {
+  const ts = view.teamScore || [0, 0], y = 20, cx = innerWidth / 2;
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = 'bold 20px Verdana, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cx - 120, y - 15, 240, 30);
+  ctx.textAlign = 'right'; ctx.fillStyle = TEAM_COLORS[0]; ctx.fillText(`RED ${ts[0]}`, cx - 12, y);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText(':', cx, y);
+  ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + 12, y);
+  ctx.restore();
+}
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
+    teams: game.mode === 'teams', teamScore: game.teamScore,
     legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
 }
 

@@ -44,11 +44,16 @@
       for (const o of Object.values(g.tanks)) {
         if (!o.alive) continue;
         if (o.id === t.id) { if (ignoreSelf || d < C.TANK_R + 10) continue; if (Math.hypot(o.x - x, o.y - y) < C.TANK_R + 6) return hitEnemy ? 'risky' : 'self'; continue; }
-        if (!hitEnemy && Math.hypot(o.x - x, o.y - y) < C.TANK_R + 2) hitEnemy = true; // keep scanning: if we miss, does it come back at us?
+        if (!hitEnemy && Math.hypot(o.x - x, o.y - y) < C.TANK_R + 2) {
+          if (!isEnemy(g, t, o)) { if (TT.FRIENDLY_FIRE) return 'mate'; continue; } // a teammate is in the way: hold fire
+          hitEnemy = true; // keep scanning: if we miss, does it come back at us?
+        }
       }
     }
     return hitEnemy ? 'enemy' : null;
   }
+  // Team mode: teammates are never targets or threats; friendly fire only matters for "don't shoot them".
+  const isEnemy = (g, t, o) => o.alive && o.id !== t.id && !(TT.sameTeam && TT.sameTeam(g, t.id, o.id));
   function clearLine(g, x0, y0, x1, y1) {
     const d = Math.hypot(x1 - x0, y1 - y0), n = Math.ceil(d / 6);
     for (let i = 1; i < n; i++) { const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n; if (g.rects.some(q => TT.circleHitsRect(x, y, 2, q))) return false; }
@@ -59,6 +64,7 @@
     for (const b of g.bullets) {
       if (Math.hypot(b.x - t.x, b.y - t.y) > 170) continue;
       if (b.owner === t.id && b.age < 0.25) continue;
+      if (!TT.FRIENDLY_FIRE && TT.sameTeam(g, t.id, b.owner)) continue; // teammates' shots pass through us
       const p = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, r: b.r };
       for (let s = 0; s < 8; s++) {
         TT.moveBullet(p, Math.hypot(p.vx, p.vy) * 0.08, g.rects);
@@ -81,7 +87,7 @@
     if (rc) { // our tank is frozen: steer the RC missile through the maze towards the nearest enemy
       br.lastPos = [t.x, t.y]; br.stuckT = 0;
       let tgt = null, bd = 1e9;
-      for (const o of Object.values(g.tanks)) if (o.alive && o.id !== t.id) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
+      for (const o of Object.values(g.tanks)) if (isEnemy(g, t, o)) { const d = Math.hypot(o.x - rc.x, o.y - rc.y); if (d < bd) { bd = d; tgt = o; } }
       if (tgt) {
         const [wx, wy] = TT.nextWaypoint(g, rc.x, rc.y, tgt.x, tgt.y), d = wrap(Math.atan2(wy - rc.y, wx - rc.x) - Math.atan2(rc.vy, rc.vx));
         if (d > 0.08) k.r = true; else if (d < -0.08) k.l = true;
@@ -96,7 +102,8 @@
     if (br.next <= 0) { // ---- decision tick (reaction time) ----
       br.next = L.react * (0.7 + Math.random() * 0.6);
       const m = g.maze, [c0, r0] = cellOf(g, t.x, t.y), startK = r0 * m.cols + c0, field = bfs(m, c0, r0);
-      const enemies = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+      const enemies = Object.values(g.tanks).filter(o => isEnemy(g, t, o));
+      const mates = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id && !isEnemy(g, t, o));
       let target = null, td = 1e9;
       for (const o of enemies) { const [c, r] = cellOf(g, o.x, o.y), d = field.dist[r * m.cols + c]; const dd = (d < 0 ? 99 : d) + Math.hypot(o.x - t.x, o.y - t.y) / 1000; if (dd < td) { td = dd; target = o; } }
       // crate if we have no weapon and one is reasonably close
@@ -122,20 +129,21 @@
         }
         // firing decision by weapon
         const w = t.weapon;
-        const now = w === 'deathray' ? (TT.deathRayPath(g, t, t.a).hits.length ? 'enemy' : null)
+        const now = w === 'deathray' ? (h => h.some(id => mates.some(o => o.id === id)) ? 'mate' : h.length ? 'enemy' : null)(TT.deathRayPath(g, t, t.a).hits)
           : rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : L.rayLen, w === 'laser' ? 9 : L.bounces, false);
         if (br.cool <= 0) {
           if (!w || w === 'gatling') plan.fire = now === 'enemy' || (now === 'risky' && Math.random() < 0.2);
           else if (w === 'laser' || w === 'deathray') plan.fire = now === 'enemy' || now === 'risky';
-          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self';
+          else if (w === 'shotgun') plan.fire = vis && dist < 220 && now !== 'self' && now !== 'mate';
           else if (w === 'frag') {
             const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
-            if (bomb) plan.fire = enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90);
-            else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self';
+            const mateNear = bomb && mates.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 90);
+            if (bomb) plan.fire = !mateNear && (enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90));
+            else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self' && now !== 'mate';
           }
-          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'missile') plan.fire = vis && dist < 250 && now !== 'self' && now !== 'mate' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
           else if (w === 'rc') plan.fire = !t.rcId && td < 8 && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
-          else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5;
+          else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5 && !mates.some(o => Math.hypot(o.x - t.x, o.y - t.y) < 90);
         }
         if (w === 'deathray' && t.charge > 0) plan.move = false;
       }
