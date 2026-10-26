@@ -39,7 +39,10 @@
   input { font: inherit; padding: 7px 8px; border: 2px solid #888; border-radius: 4px; width: 100%; background: #fff; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
   .row > input { flex: 1 1 120px; min-width: 0; }
-  .seg > span:first-child { width: 72px; flex: 0 0 auto; }
+  .seg > span:first-child { width: 84px; flex: 0 0 auto; }
+  /* choice rows stay on one line: buttons shrink to share the space instead of wrapping */
+  #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: nowrap; }
+  #modeSel > button, #nSel > button, #lvlSel > button, #lvlRow > button { flex: 1 1 auto; min-width: 0; padding-left: 6px; padding-right: 6px; }
   .foot { margin-top: 12px; text-align: center; }
   /* tabs: only when both columns don't fit (narrow or short screens); otherwise side by side */
   .tabs { display: none; gap: 6px; margin: 8px 0 6px; }
@@ -127,6 +130,7 @@
     button { padding: 7px 8px; font-size: 14px; }
     .row { gap: 6px; }
     .seg > span:first-child { width: 100%; font-size: 13px; color: #555; margin-bottom: -2px; }
+    #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: wrap; }
     .seg > button { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
     .seg > button.team { flex: 0 1 auto; }
     #botRow > b, .seg > b { flex: 0 0 auto; }
@@ -175,9 +179,8 @@
       <div class="col" data-col="online">
         <h2>Online (own PC/phone each)</h2>
         <div class="row"><input id="name" maxlength="14" placeholder="Your name"></div>
-        <div class="row"><input id="server" placeholder="Server URL (blank = this site)" style="font-size:12px"></div>
         <div class="row"><button class="go" id="create" style="flex:1">Create room</button></div>
-        <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1">Join room</button></div>
+        <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1;white-space:nowrap">Join room</button></div>
         <div class="err" id="err"></div>
         <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire, <kbd>1</kbd>–<kbd>6</kbd> = reactions 😂😡😭😎💀👍 (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
