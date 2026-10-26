@@ -89,6 +89,17 @@
   #plist { list-style: none; padding: 0; margin: 10px 0; }
   #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
   #menuBtn { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
+  /* emoji reactions: small 😀 button at the top (next to ☰ for P1 when two share a phone, top right otherwise) + 3×2 picker */
+  .react { position: fixed; top: calc(8px + env(safe-area-inset-top)); z-index: 6; touch-action: none; }
+  .react.left { left: calc(58px + env(safe-area-inset-left)); } .react.right { right: calc(8px + env(safe-area-inset-right)); }
+  .rbtn { padding: 3px 8px; font-size: 19px; line-height: 1.2; opacity: .8; }
+  .rbtn.cool { opacity: .35; }
+  .rpick { position: absolute; top: 44px; display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; padding: 6px; background: rgba(255,255,255,.96); border: 2px solid #555; border-radius: 10px; box-shadow: 0 3px 0 #999; }
+  .react.left .rpick { left: 0; } .react.right .rpick { right: 0; }
+  body:not(.portrait) .rpick { top: 0; } /* landscape: open sideways towards the maze, never over FIRE */
+  body:not(.portrait) .react.left .rpick { left: calc(100% + 14px); } body:not(.portrait) .react.right .rpick { right: calc(100% + 14px); }
+  .rpick button { width: 44px; height: 44px; padding: 0; font-size: 26px; line-height: 1; border: 0; background: transparent; box-shadow: none; border-radius: 8px; }
+  .rpick button:active { background: #e3e3e3; transform: scale(.92); }
   #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
   /* team mode */
   .teampick { flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -168,7 +179,7 @@
         <div class="row"><button class="go" id="create" style="flex:1">Create room</button></div>
         <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1">Join room</button></div>
         <div class="err" id="err"></div>
-        <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
+        <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire, <kbd>1</kbd>–<kbd>6</kbd> = reactions 😂😡😭😎💀👍 (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
     <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
@@ -188,7 +199,7 @@
     <div class="row seg hidden" id="lvlRow"><span>Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
     <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
     <div class="row"><button id="leave">Leave room</button></div>
-    <div class="muted help">Controls: arrows + Space/M · on phone: on-screen stick + FIRE</div>
+    <div class="muted help">Controls: arrows + Space/M · 1–6 react · on phone: on-screen stick + FIRE</div>
     </div></div>
   </div>
 </div>

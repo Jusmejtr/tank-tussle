@@ -17,6 +17,24 @@
   const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
   const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
 
+  // Emoji reactions (shown as a bubble over the tank, or over its score when dead). Index = wire id.
+  const REACTIONS = ['😂', '😡', '😭', '😎', '💀', '👍'];
+  const REACTION_NAMES = ['Laugh', 'Mad', 'Cry', 'Cool', 'Dead', 'GG'];
+  const REACT_COOLDOWN = 1.5, REACT_SHOW = 2; // seconds
+  // Allowed reaction + per-player cooldown. `last` maps player id -> time of the last accepted one (seconds).
+  function tryReact(last, id, r, now, cooldown = REACT_COOLDOWN) {
+    if (!Number.isInteger(r) || r < 0 || r >= REACTIONS.length) return false;
+    if (last[id] != null && now - last[id] < cooldown) return false;
+    last[id] = now; return true;
+  }
+  // Bots sometimes react to a kill: the killer laughs / looks cool, a killed bot sometimes cries or rages.
+  function botReaction(ev, isBot, rnd = Math.random) {
+    if (!ev || ev.type !== 'die') return null;
+    if (ev.by != null && ev.by !== ev.id && isBot(ev.by) && rnd() < 0.45) return { id: ev.by, r: rnd() < 0.7 ? 0 : 3 };
+    if (isBot(ev.id) && rnd() < 0.2) return { id: ev.id, r: rnd() < 0.5 ? 2 : (ev.by === ev.id ? 4 : 1) };
+    return null;
+  }
+
   const rand = (a, b) => a + Math.random() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b + 1));
 
@@ -192,7 +210,14 @@
         const d = chosen.length ? Math.min(...chosen.map(q => Math.abs(q[0] - c) + Math.abs(q[1] - r))) + Math.random() * 0.5 : Math.random();
         if (d > bestD) { bestD = d; best = [c, r]; }
       }
-      if (!best) best = [0, 0];
+      if (!best) { // unlucky random picks: take the free cell farthest from the others (never share a cell)
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+          if (chosen.some(q => q[0] === c && q[1] === r)) continue;
+          const d = chosen.length ? Math.min(...chosen.map(q => Math.abs(q[0] - c) + Math.abs(q[1] - r))) : 0;
+          if (d > bestD) { bestD = d; best = [c, r]; }
+        }
+        if (!best) best = [0, 0];
+      }
       chosen.push(best);
       g.tanks[p.id] = {
         id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
@@ -533,5 +558,5 @@
     };
   }
 
-  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
