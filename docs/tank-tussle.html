@@ -87,6 +87,17 @@
   #plist { list-style: none; padding: 0; margin: 10px 0; }
   #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
   #menuBtn { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
+  /* emoji reactions: small 😀 button at the top (next to ☰ for P1 when two share a phone, top right otherwise) + 3×2 picker */
+  .react { position: fixed; top: calc(8px + env(safe-area-inset-top)); z-index: 6; touch-action: none; }
+  .react.left { left: calc(58px + env(safe-area-inset-left)); } .react.right { right: calc(8px + env(safe-area-inset-right)); }
+  .rbtn { padding: 3px 8px; font-size: 19px; line-height: 1.2; opacity: .8; }
+  .rbtn.cool { opacity: .35; }
+  .rpick { position: absolute; top: 44px; display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; padding: 6px; background: rgba(255,255,255,.96); border: 2px solid #555; border-radius: 10px; box-shadow: 0 3px 0 #999; }
+  .react.left .rpick { left: 0; } .react.right .rpick { right: 0; }
+  body:not(.portrait) .rpick { top: 0; } /* landscape: open sideways towards the maze, never over FIRE */
+  body:not(.portrait) .react.left .rpick { left: calc(100% + 14px); } body:not(.portrait) .react.right .rpick { right: calc(100% + 14px); }
+  .rpick button { width: 44px; height: 44px; padding: 0; font-size: 26px; line-height: 1; border: 0; background: transparent; box-shadow: none; border-radius: 8px; }
+  .rpick button:active { background: #e3e3e3; transform: scale(.92); }
   #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
   /* team mode */
   .teampick { flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -166,7 +177,7 @@
         <div class="row"><button class="go" id="create" style="flex:1">Create room</button></div>
         <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1">Join room</button></div>
         <div class="err" id="err"></div>
-        <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
+        <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire, <kbd>1</kbd>–<kbd>6</kbd> = reactions 😂😡😭😎💀👍 (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
     <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
@@ -186,7 +197,7 @@
     <div class="row seg hidden" id="lvlRow"><span>Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
     <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
     <div class="row"><button id="leave">Leave room</button></div>
-    <div class="muted help">Controls: arrows + Space/M · on phone: on-screen stick + FIRE</div>
+    <div class="muted help">Controls: arrows + Space/M · 1–6 react · on phone: on-screen stick + FIRE</div>
     </div></div>
   </div>
 </div>
@@ -227,6 +238,24 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   const TEAM_COLORS = ['#d8342c', '#2f6fd6'], TEAM_NAMES = ['Red', 'Blue'];
   const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
   const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
+
+  // Emoji reactions (shown as a bubble over the tank, or over its score when dead). Index = wire id.
+  const REACTIONS = ['😂', '😡', '😭', '😎', '💀', '👍'];
+  const REACTION_NAMES = ['Laugh', 'Mad', 'Cry', 'Cool', 'Dead', 'GG'];
+  const REACT_COOLDOWN = 1.5, REACT_SHOW = 2; // seconds
+  // Allowed reaction + per-player cooldown. `last` maps player id -> time of the last accepted one (seconds).
+  function tryReact(last, id, r, now, cooldown = REACT_COOLDOWN) {
+    if (!Number.isInteger(r) || r < 0 || r >= REACTIONS.length) return false;
+    if (last[id] != null && now - last[id] < cooldown) return false;
+    last[id] = now; return true;
+  }
+  // Bots sometimes react to a kill: the killer laughs / looks cool, a killed bot sometimes cries or rages.
+  function botReaction(ev, isBot, rnd = Math.random) {
+    if (!ev || ev.type !== 'die') return null;
+    if (ev.by != null && ev.by !== ev.id && isBot(ev.by) && rnd() < 0.45) return { id: ev.by, r: rnd() < 0.7 ? 0 : 3 };
+    if (isBot(ev.id) && rnd() < 0.2) return { id: ev.id, r: rnd() < 0.5 ? 2 : (ev.by === ev.id ? 4 : 1) };
+    return null;
+  }
 
   const rand = (a, b) => a + Math.random() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b + 1));
@@ -403,7 +432,14 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         const d = chosen.length ? Math.min(...chosen.map(q => Math.abs(q[0] - c) + Math.abs(q[1] - r))) + Math.random() * 0.5 : Math.random();
         if (d > bestD) { bestD = d; best = [c, r]; }
       }
-      if (!best) best = [0, 0];
+      if (!best) { // unlucky random picks: take the free cell farthest from the others (never share a cell)
+        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+          if (chosen.some(q => q[0] === c && q[1] === r)) continue;
+          const d = chosen.length ? Math.min(...chosen.map(q => Math.abs(q[0] - c) + Math.abs(q[1] - r))) : 0;
+          if (d > bestD) { bestD = d; best = [c, r]; }
+        }
+        if (!best) best = [0, 0];
+      }
       chosen.push(best);
       g.tanks[p.id] = {
         id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
@@ -744,7 +780,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     };
   }
 
-  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -959,12 +995,21 @@ const LOCAL = [
   { name: 'Yellow', keys: { u: 'Numpad8', l: 'Numpad4', d: 'Numpad5', r: 'Numpad6', f: 'Numpad0' }, label: ['Num8', 'Num4', 'Num5', 'Num6', 'Num0'] },
 ];
 const ONLINE_KEYS = { u: ['ArrowUp', 'KeyW'], l: ['ArrowLeft', 'KeyA'], d: ['ArrowDown', 'KeyS'], r: ['ArrowRight', 'KeyD'], f: ['Space', 'KeyM', 'Enter'] };
+// Emoji reactions (TT.REACTIONS order: 😂 😡 😭 😎 💀 👍). One row of 6 keys per local player; online = P1's (1-6).
+const REACT_KEYS = [
+  ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'],
+  ['Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'],
+  ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN'],
+  ['Numpad7', 'Numpad9', 'Numpad1', 'Numpad2', 'Numpad3', 'NumpadDecimal'],
+];
+const REACT_LABELS = ['1–6', '7 8 9 0 - =', 'Z X C V B N', 'Num 7 9 1 2 3 .'];
 const GAME_CODES = new Set([...LOCAL.map(s => Object.values(s.keys)), ...Object.values(ONLINE_KEYS)].flat(2));
 
 const down = new Set(), tapped = new Set();
 addEventListener('keydown', e => {
   if (e.code === 'Escape') { if (mode) togglePause(); return; }
   if (!mode || inOverlay()) return;
+  if (reactKey(e.code)) { e.preventDefault(); if (!e.repeat) audioInit(); return; }
   if (GAME_CODES.has(e.code)) e.preventDefault();
   down.add(e.code); tapped.add(e.code); audioInit();
   if (mode === 'online' && net) onlineInput();
@@ -990,6 +1035,7 @@ let stickModes = (() => { try { const v = JSON.parse(localStorage.getItem('tt-st
 const saveStickModes = () => { try { localStorage.setItem('tt-stick', JSON.stringify(stickModes)); } catch {} };
 function keysHtml(n) {
   return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
+    + (n ? `<div>Reactions ${TT.REACTIONS.join('')}: ${REACT_LABELS.slice(0, n).map((l, i) => `${n > 1 ? 'P' + (i + 1) + ' ' : ''}<kbd>${l}</kbd>`).join(' · ')}</div>` : '')
     + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '')
     + (nBots ? `<div><span class="dot" style="background:${COLORS[n]}"></span><b>${nBots} bot${nBots > 1 ? 's' : ''}</b> (${botLevel}) — colours ${COLOR_NAMES_FOR(n, nBots)}</div>` : '')
     + (n + nBots < 2 ? '<div class="err">Need at least 2 tanks — add a player or a bot.</div>' : '');
@@ -1087,7 +1133,7 @@ function togglePause(on) {
 }
 function quit(keepErr) {
   if (net) { net.closed = true; try { net.send({ t: 'leave' }); net.ws.close(); } catch {} net = null; }
-  mode = null; game = null; paused = false; particles.length = 0;
+  mode = null; game = null; paused = false; particles.length = 0; bubbles.clear(); setupReact(null);
   ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
   show('menu', true); refreshMenu();
   history.replaceState(null, '', location.pathname);
@@ -1109,6 +1155,7 @@ function startLocal(n, bots = 0, level = 'normal', teams = null) {
   TT.newRound(game); game.events.length = 0;
   show('menu', false); show('menuBtn', true);
   setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
+  bubbles.clear(); setupReact(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
   flash(teams ? 'Teams: Red vs Blue — last team standing scores!' : n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
@@ -1179,11 +1226,13 @@ function openSocket(me, firstMsg) {
       me.you = m.you; me.code = m.code; me.token = m.token; mode = 'online'; $('err').textContent = '';
       localStorage.setItem('tt-server', me.base);
       history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
-      show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
+      show('menu', false); show('menuBtn', true); if (!re) { setupTouch(isTouch ? 'online' : null); bubbles.clear(); setupReact('online'); } else flash('Reconnected!');
     } else if (m.t === 'lobby') {
       me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
       if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
       me.started = m.started; renderLobby();
+    } else if (m.t === 'react') {
+      if (Number.isInteger(m.r) && TT.REACTIONS[m.r]) showBubble(m.id, m.r);
     } else if (m.t === 'maze') {
       me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 };
     } else if (m.t === 's') {
@@ -1321,6 +1370,10 @@ function handleEvents(evs, tankOf) {
     }
     else if (e.type === 'die') {
       boom();
+      if (mode === 'local' && game) { // bots sometimes laugh at their kill (or cry about being hit)
+        const br = TT.botReaction(e, id => { const q = game.players.find(q => q.id === id); return !!(q && q.bot); });
+        if (br) { const g0 = game; setTimeout(() => game === g0 && reactAs(br.id, br.r), 500); }
+      }
       const p = (mode === 'local' ? game.players : net.players).find(p => p.id === e.id);
       const col = p ? COLORS[p.color] : '#888';
       for (let i = 0; i < 34; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 120; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.6, max: 1.1, col: i % 3 ? col : (i % 2 ? '#555' : '#f7b733'), r: 1.5 + Math.random() * 3 }); }
@@ -1419,16 +1472,68 @@ function setupTouch(m) {
   show('padL', true); show('padR', true);
 }
 
+// ---------- reactions ----------
+// A bubble with the emoji floats over the player's tank (over their score while dead) for TT.REACT_SHOW s.
+// Cooldown TT.REACT_COOLDOWN s per player. Local: checked here. Online: the server checks and broadcasts it.
+const bubbles = new Map(), reactLast = {};
+function showBubble(id, r) { bubbles.set(id, { r, at: performance.now() }); beep(r === 1 || r === 4 ? 300 : 700, 0.06, 'triangle', 0.04, 1.4); }
+function reactAs(id, r) { if (TT.tryReact(reactLast, id, r, performance.now() / 1000)) { showBubble(id, r); return true; } return false; }
+// slot = local human index (0..3), or 0 = you online
+function doReact(slot, r) {
+  let ok = false;
+  if (mode === 'local' && game) { const p = game.players[slot]; ok = !!(p && !p.bot && reactAs(p.id, r)); }
+  else if (mode === 'online' && net && net.you) { ok = TT.tryReact(reactLast, 'me', r, performance.now() / 1000); if (ok) net.send({ t: 'react', r }); }
+  const w = reactEls[slot]; if (ok && w) { w.btn.classList.add('cool'); clearTimeout(w.cd); w.cd = setTimeout(() => w.btn.classList.remove('cool'), TT.REACT_COOLDOWN * 1000); }
+  return ok;
+}
+function reactKey(code) {
+  if (mode === 'local' && game) {
+    for (let i = 0; i < REACT_KEYS.length; i++) { const r = REACT_KEYS[i].indexOf(code); if (r >= 0) { if (game.players[i] && !game.players[i].bot) doReact(i, r); return true; } }
+  } else if (mode === 'online') { const r = REACT_KEYS[0].indexOf(code); if (r >= 0) { doReact(0, r); return true; } }
+  return false;
+}
+// On-screen: a small 😀 button at the top (P1 next to ☰ when two share a phone, otherwise top right) that opens a 3×2 picker.
+let reactEls = [];
+function reactUI(slot, side) {
+  const w = document.createElement('div'); w.className = 'react ' + side;
+  const b = document.createElement('button'); b.className = 'rbtn'; b.textContent = '😀'; b.title = 'Reactions' + (mode === 'online' ? ' (keys 1–6)' : '');
+  const pick = document.createElement('div'); pick.className = 'rpick hidden';
+  TT.REACTIONS.forEach((e, i) => { const x = document.createElement('button'); x.textContent = e; x.title = TT.REACTION_NAMES[i]; x.dataset.r = i; pick.append(x); });
+  const close = () => { pick.classList.add('hidden'); clearTimeout(w.t); };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); audioInit(); clearTimeout(w.t); if (!pick.classList.toggle('hidden')) w.t = setTimeout(close, 4000); });
+  pick.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); const x = e.target.closest('button[data-r]'); if (!x) return; doReact(slot, +x.dataset.r); close(); });
+  w.append(b, pick); document.body.append(w); Object.assign(w, { btn: b, pick, close }); return w;
+}
+function setupReact(m) {
+  reactEls.forEach(w => w && w.remove()); reactEls = [];
+  if (m === 'local2') reactEls = [reactUI(0, 'left'), reactUI(1, 'right')];
+  else if (m === 'local1' || m === 'online') reactEls = [reactUI(0, 'right')];
+}
+addEventListener('pointerdown', e => { for (const w of reactEls) if (w && !w.contains(e.target)) w.close(); }, true);
+function drawBubble(x, y, r, age) {
+  const life = TT.REACT_SHOW, pop = Math.min(1, age / 0.14), k = pop < 1 ? pop * 1.15 : 1 + 0.15 * Math.max(0, 1 - (age - 0.14) / 0.12);
+  const a = Math.min(1, (life - age) / 0.4); y -= age * 8; y = Math.max(26, y);
+  ctx.save(); ctx.globalAlpha = Math.max(0, a); ctx.translate(x, y); ctx.scale(k, k);
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, 19, 0, 6.283); ctx.moveTo(-6, 17); ctx.lineTo(0, 27); ctx.lineTo(6, 17); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 17.5, 0, 6.283); ctx.fill(); // hide the tail's join line
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+  ctx.font = '22px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'; ctx.fillText(TT.REACTIONS[r], 0, 1.5);
+  ctx.restore();
+}
+
 // ---------- rendering ----------
 let teamBar = false; // team mode: a team-score strip across the top
-function layout(maze) {
+function layout(maze, n = 2) {
   const W = innerWidth, H = innerHeight, top = teamBar ? 34 : 0;
   const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
   const side = padMode && !port ? Math.min(180, Math.max(120, W * 0.19)) : 10;
-  const hud = Math.max(44, Math.min(70, H * 0.12)), bot = padMode && port ? 160 : 0;
+  // scoreboard: one row, or two rows when 5-8 players would get too squeezed (phones)
+  const rows = n > 4 && (W - (padMode ? side * 2 : 20)) / n < 95 ? 2 : 1;
+  const hud = rows === 2 ? Math.max(76, Math.min(110, H * 0.17)) : Math.max(44, Math.min(70, H * 0.12)), bot = padMode && port ? 160 : 0;
   const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
   const s = Math.min((W - side * 2) / mw, (H - hud - bot - top - 16) / mh);
-  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: top + Math.max(8, (H - hud - bot - top - maze.rows * C.CELL * s) / 2), hud, side, bot, top };
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: top + Math.max(8, (H - hud - bot - top - maze.rows * C.CELL * s) / 2), hud, side, bot, top, rows };
 }
 // Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
 function drawTurret(w, color, charge = 0) {
@@ -1578,7 +1683,7 @@ function render(view, dt) {
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
   teamBar = !!view.teams;
   const teamOfId = id => { const p = view.players.find(p => p.id === id); return p && p.team != null ? p.team : 0; };
-  const m = view.maze, L = layout(m), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
+  const m = view.maze, L = layout(m, view.players.length), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
   const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
   ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
   // floor + faint cell grid
@@ -1637,11 +1742,15 @@ function render(view, dt) {
   ctx.globalAlpha = 1; ctx.restore();
   if (view.teams) drawTeamBar(view);
   // HUD: scores + current weapon at the bottom
-  const ps = view.players, n = ps.length, hy = innerHeight - L.bot - L.hud / 2 - 4;
-  const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
+  const ps = view.players, n = ps.length, rows = L.rows, per = Math.ceil(n / rows), rowH = L.hud / rows;
+  const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, per));
+  const hudAt = {};
   ctx.textBaseline = 'middle';
   ps.forEach((p, i) => {
-    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50, slot / 120);
+    const row = Math.floor(i / per), col = i % per, inRow = row === rows - 1 ? n - per * (rows - 1) : per;
+    const hy = innerHeight - L.bot - L.hud + rowH * (row + 0.5) - 4;
+    const cx = innerWidth / 2 + (col - (inRow - 1) / 2) * slot - 14, sc = Math.min(1.3, rowH / 50, slot / 120);
+    hudAt[p.id] = { x: cx - 26 * sc, y: hy - 16 * sc };
     const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
     if (view.teams) teamRing(cx - 26 * sc, hy, TEAM_COLORS[p.team || 0], sc);
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
@@ -1650,7 +1759,7 @@ function render(view, dt) {
     if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
     else ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
-    const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
+    const ix = cx + (view.teams ? 44 : 30) * sc, iy = hy - 6 * sc, bs = 20 * sc;
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;
     if (!w) { ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke(); }
     if (w) {
@@ -1661,6 +1770,14 @@ function render(view, dt) {
     const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
     ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
+  // reaction bubbles: over the tank while alive, over the player's score while dead
+  const now = performance.now();
+  for (const [id, bb] of bubbles) {
+    const age = (now - bb.at) / 1000; if (age >= TT.REACT_SHOW) { bubbles.delete(id); continue; }
+    const t = view.tanks.find(t => t.id === id);
+    if (t && t.alive) drawBubble(L.ox + t.x * L.s, L.oy + t.y * L.s - Math.max(14, (C.TANK_R + 4) * L.s) - 27, bb.r, age);
+    else if (hudAt[id]) drawBubble(hudAt[id].x, hudAt[id].y - 27, bb.r, age);
+  }
 }
 // Team colour ring under a tank (team mode): each tank keeps its own colour, the ring shows its team.
 function teamRing(x, y, col, s) {
@@ -1670,8 +1787,9 @@ function teamRing(x, y, col, s) {
 }
 function drawTeamBar(view) {
   const ts = view.teamScore || [0, 0], y = 20, cx = innerWidth / 2;
-  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = 'bold 20px Verdana, sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cx - 120, y - 15, 240, 30);
+  const bw = Math.max(110, Math.min(240, innerWidth - 216)), fs = Math.max(12, Math.round(20 * bw / 240)); // leaves the ☰ / 😀 corners free
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = `bold ${fs}px Verdana, sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cx - bw / 2, y - 15, bw, 30);
   ctx.textAlign = 'right'; ctx.fillStyle = TEAM_COLORS[0]; ctx.fillText(`RED ${ts[0]}`, cx - 12, y);
   ctx.textAlign = 'center'; ctx.fillStyle = '#555'; ctx.fillText(':', cx, y);
   ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + 12, y);
@@ -1697,7 +1815,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 // PWA: offline app shell (served pages only; the single-file tank-tussle.html skips it)
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.TT_SINGLE) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
-window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down, drawTank, ctx, get paused() { return paused; }, set paused(v) { paused = v; } };
+window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, bubbles, doReact, down, drawTank, ctx, get paused() { return paused; }, set paused(v) { paused = v; } };
 })();
 
 </script>

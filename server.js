@@ -76,6 +76,7 @@ function startGame(room) {
     TT.step(g, inputs, TICK);
     for (const m of room.members.values()) if (m.seq) m.ticks++;
     const ev = g.events.splice(0);
+    for (const e of ev) { const br = TT.botReaction(e, id => { const x = room.members.get(id); return !!(x && x.bot); }); if (br) setTimeout(() => react(room, br.id, br.r), 500); }
     if (g.round !== round) { round = g.round; debugArm(g); broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room)); }
     if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die')) {
       const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round');
@@ -87,6 +88,8 @@ function startGame(room) {
 // Test hook: TT_DEBUG_WEAPONS=1 hands every tank a weapon at round start (used by the online weapon test)
 let debugN = 0;
 function debugArm(g) { if (!process.env.TT_DEBUG_WEAPONS) return; for (const t of Object.values(g.tanks)) TT.giveWeapon(t, TT.WEAPONS[debugN++ % TT.WEAPONS.length]); }
+// Emoji reactions: allowed list + per-player cooldown, then everyone in the room sees it (works while dead / in the lobby too)
+function react(room, id, r) { if (!room.members.has(id)) return false; room.reactLast = room.reactLast || {}; if (!TT.tryReact(room.reactLast, id, r, Date.now() / 1000, TT.REACT_COOLDOWN - 0.3)) return false; broadcast(room, { t: 'react', id, r }); return true; }
 function stopGame(room) { if (room.loop) clearInterval(room.loop); room.loop = null; room.game = null; }
 
 let nextId = 1;
@@ -141,6 +144,7 @@ wss.on('connection', ws => {
       if (x && (id === me.id || isHost())) { x.team = m.team === 0 || m.team === 1 ? m.team : 1 - x.team; broadcast(room, lobbyMsg(room)); }
     }
     else if (m.t === 'leave' && room) { const r = room, id = me.id; room = null; me = null; removeMember(r, id); }
+    else if (m.t === 'react' && room && me) react(room, me.id, m.r);
     else if (m.t === 'ping') send(ws, { t: 'pong', c: m.c });
   });
   ws.on('close', () => {

@@ -37,11 +37,25 @@ Both modes send the same keys as the keyboard, so online play needs nothing extr
 **Online (each player on their own PC/phone)** — needs the server (see *Server setup* below):
 1. Enter a name and click **Create room** → you get a 4-letter code and a share link (`?room=CODE`).
 2. Friends open the link (or enter the code) and click **Join room**.
-3. The host can add bots (− / +, skill Easy/Normal/Hard) — up to 8 tanks per room — and clicks **Start game**.
+3. Up to **8 tanks per room** (players + bots, 8 colours; Teams balance 4 v 4). The host can add bots (− / +, skill Easy/Normal/Hard) and clicks **Start game**. With 5–8 tanks the scoreboard uses two rows on phones.
 4. Everyone drives with arrows (or WASD) and fires with Space / M; phones get an on-screen stick + FIRE.
 If a connection drops, the client reconnects automatically and gets its tank back (slot is kept for 30 s).
 
 Esc / ☰ opens the menu (the host can end the game and return everyone to the lobby).
+
+**Emoji reactions** — 😂 Laugh · 😡 Mad · 😭 Cry · 😎 Cool · 💀 Dead · 👍 GG. A bubble pops up over your tank for 2 s
+(over your score if you're dead — that's the point: get killed, laugh or rage). 1.5 s cooldown per player.
+
+| Who | Keys (😂 😡 😭 😎 💀 👍) |
+|---|---|
+| P1 (and everyone online) | 1 2 3 4 5 6 |
+| P2 | 7 8 9 0 - = |
+| P3 | Z X C V B N |
+| P4 | Numpad 7 9 1 2 3 . |
+
+On a phone tap the small 😀 button at the top (top right; with two players on one phone P1's is next to ☰ and P2's top right) and pick one.
+Online the server checks the reaction (allowed list + cooldown) and sends it to everyone in the room. Bots sometimes laugh when they get a kill.
+(Online reactions need the updated server / Docker image; an older server just ignores them.)
 
 **Free-for-all or Teams** — pick the mode on the title screen (local) or in the lobby (online, host only).
 - *Free-for-all* (default): last tank standing scores a point.
@@ -168,6 +182,7 @@ Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG)
 ### Tests (optional, need Chrome + puppeteer-core)
 
 `tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
-- `node tests/stick-unit.js` and `node tests/teams-unit.js` are pure Node (no browser).
+- `node tests/stick-unit.js`, `node tests/teams-unit.js` and `node tests/reactions-unit.js` are pure Node (no browser).
+- `BASE=http://localhost:8097 node tests/reactions-headless.js`: reactions (keys, phone picker, online broadcast + server checks) and an 8-player online room (9th refused, 4 v 4 teams, no overlapping spawns).
 - `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby/game fit without scrolling, 320 px → desktop) and `tests/pwa-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
 `TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).
