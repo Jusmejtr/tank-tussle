@@ -39,6 +39,9 @@ function teamBadges() {
   return localTeams.map((t, i) => `<button class="team" data-i="${i}" title="Tap to switch team" style="border-color:${TEAM_COLORS[t]}"><span class="dot" style="background:${COLORS[i]}"></span>${i < nLocal ? 'P' + (i + 1) : 'Bot ' + (i - nLocal + 1)} <b style="color:${TEAM_COLORS[t]}">${TEAM_NAMES[t]}</b></button>`).join('');
 }
 const MAX_TANKS = 8;
+const STICK_MODES = ['tank', 'point'];
+let stickModes = (() => { try { const v = JSON.parse(localStorage.getItem('tt-stick')); if (Array.isArray(v)) return [0, 1].map(i => STICK_MODES.includes(v[i]) ? v[i] : 'tank'); } catch {} return ['tank', 'tank']; })();
+const saveStickModes = () => { try { localStorage.setItem('tt-stick', JSON.stringify(stickModes)); } catch {} };
 function keysHtml(n) {
   return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
     + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '')
@@ -57,6 +60,7 @@ function refreshMenu() {
     $('teamPick').querySelectorAll('button.team').forEach(b => b.onclick = () => { localTeams[+b.dataset.i] ^= 1; refreshMenu(); }); }
   $('keysLocal').innerHTML = keysHtml(nLocal);
   $('playLocal').disabled = nLocal + nBots < 2;
+  renderStickSel();
   $('touchNote').textContent = isTouch ? 'On a phone/tablet: P1 (Red) gets a stick + FIRE; with 2 humans Red uses the left side, Green the right.' : '';
 }
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
@@ -64,6 +68,34 @@ document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () 
 document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.onclick = () => { localMode = b.dataset.m; refreshMenu(); });
 $('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
 $('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
+// Touch stick mode per player (only the humans on this phone: P1, and P2 when 2+ players share it)
+function renderStickSel() {
+  const n = isTouch ? Math.min(2, Math.max(1, nLocal)) : 0;
+  show('stickRow', n > 0); if (!n) return;
+  $('stickSel').innerHTML = [...Array(n)].map((_, i) => `<span class="sg">${n > 1 ? `<i style="color:${COLORS[i]}">P${i + 1}</i>` : ''}${STICK_MODES.map(m => `<button data-p="${i}" data-s="${m}" class="${stickModes[i] === m ? 'sel' : ''}" title="${m === 'tank' ? 'Up = forward, down = reverse, left/right = turn' : 'Point where to go; REVERSE button backs up'}">${m === 'tank' ? 'Tank' : 'Point'}</button>`).join('')}</span>`).join('');
+  $('stickSel').querySelectorAll('button').forEach(b => b.onclick = () => { stickModes[+b.dataset.p] = b.dataset.s; saveStickModes(); renderStickSel(); fitPanels(); });
+}
+// Tabs (shown by CSS on narrow/short screens): one column at a time
+document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button[data-tab]').forEach(x => x.classList.toggle('sel', x === b));
+  document.querySelectorAll('.cols .col').forEach(c => c.classList.toggle('active', c.dataset.col === b.dataset.tab));
+  fitPanels();
+});
+// Never scroll: if a card is still taller/wider than the screen, shrink it (visually) until it fits.
+function fitPanels() {
+  for (const ov of document.querySelectorAll('.overlay')) {
+    if (ov.classList.contains('hidden')) continue;
+    const pn = ov.querySelector('.panel'); if (!pn) continue;
+    pn.style.transform = ''; pn.style.marginBottom = ''; pn.style.marginTop = '';
+    const cs = getComputedStyle(ov), padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom), padH = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const h = pn.offsetHeight + 6, w = pn.offsetWidth, availH = ov.clientHeight - padV, availW = ov.clientWidth - padH;
+    const k = Math.min(1, availH / h, availW / w);
+    if (k < 1) { pn.style.transform = `scale(${k})`; pn.style.marginTop = '0'; pn.style.marginBottom = `${-(h * (1 - k))}px`; }
+  }
+}
+addEventListener('resize', () => requestAnimationFrame(fitPanels));
+if (window.ResizeObserver) { const ro = new ResizeObserver(() => fitPanels()); document.querySelectorAll('.overlay .panel').forEach(p => ro.observe(p)); }
+new MutationObserver(() => requestAnimationFrame(fitPanels)).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
 refreshMenu();
 const qs = new URLSearchParams(location.search);
 $('name').value = localStorage.getItem('tt-name') || '';
@@ -141,7 +173,7 @@ function localTick(dt) {
     const inputs = {};
     game.players.forEach((p, i) => {
       if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
-      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i])); inputs[p.id] = k;
+      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i], game.tanks[p.id] && game.tanks[p.id].a, 1 / 60)); inputs[p.id] = k;
     });
     TT.step(game, inputs, 1 / 60); tapped.clear();
     handleEvents(game.events.splice(0), id => game.tanks[id]);
@@ -241,7 +273,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 function onlineInput() {
   let k = inOverlay() ? { u: 0, d: 0, l: 0, r: 0, f: 0 } : readKeys(ONLINE_KEYS);
   const now = performance.now();
-  if (touchIn[0] && !inOverlay()) k = merge(k, stickInput(touchIn[0]));
+  if (touchIn[0] && !inOverlay()) k = merge(k, stickInput(touchIn[0], myAngle(now), net.frameDt || 1 / 60));
   const s = JSON.stringify(k);
   tapped.clear();
   if (s !== net.lastSent || now - net.lastSentAt > 250) {
@@ -250,6 +282,12 @@ function onlineInput() {
   }
 }
 // Own-tank prediction: the server's last state for us, plus our inputs it hasn't applied yet, replayed locally.
+// Our tank's angle as we predict it right now (what the player sees), falling back to the latest snapshot.
+function myAngle(now) {
+  if (net.pb) return predictAt(net.pb, now).a;
+  const sn = net.snaps[net.snaps.length - 1], t = sn && sn.tanks.get(net.you);
+  return t ? t.a : null;
+}
 function predictAt(b, to) {
   const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
   if (b.frozen) return p;
@@ -345,14 +383,24 @@ function handleEvents(evs, tankOf) {
 }
 
 // ---------- touch controls ----------
-// The stick works like the keyboard, relative to the tank: up = forward, down = reverse, left/right = turn,
-// diagonals combine them. stickInput() turns it into the same u/d/l/r keys, so local play, the server and the
-// online prediction all run the exact same key-driven movement.
+// Two stick modes (chosen per player on the start screen, saved in localStorage):
+//  'tank'  (default) like the keyboard, relative to the tank: up = forward, down = reverse, left/right = turn.
+//  'point' the tank turns to face where the stick points and drives once facing it; REVERSE (held) backs up
+//          while the stick keeps steering the facing.
+// Either way stickInput() turns the stick into the same u/d/l/r keys the keyboard sends, so local play, the
+// server and online prediction all run identical key-driven movement (no server change needed).
+// Sticks always use plain screen axes: up on the screen = up for every player (players sit side by side).
 const touchIn = [null, null];
-const blankPad = () => ({ u: false, d: false, l: false, r: false, f: false, on: false, dx: 0, dy: 0 });
-function stickInput(s) {
-  if (!s.on) return { u: false, d: false, l: false, r: false, f: s.f };
-  return Object.assign(TT.stickKeys(s.dx, s.dy), { f: s.f });
+const blankPad = (mode = 'tank') => ({ u: false, d: false, l: false, r: false, f: false, on: false, dx: 0, dy: 0, rev: false, mode });
+const NOKEYS = () => ({ u: false, d: false, l: false, r: false });
+// tankAngle: this player's tank angle now (needed by 'point'); dt: frame time (rotation step for the no-jitter stop)
+function stickInput(s, tankAngle, dt = 1 / 60) {
+  let k = NOKEYS();
+  if (s.mode === 'point') {
+    if (s.on && tankAngle != null) k = TT.pointKeys(tankAngle, Math.atan2(s.dy, s.dx), C.TANK_ROT * Math.max(1 / 60, dt));
+    if (s.rev) { k.u = false; k.d = true; }
+  } else if (s.on) k = TT.stickKeys(s.dx, s.dy);
+  return Object.assign(k, { f: s.f });
 }
 const sticks = [];
 function joystick(idx) {
@@ -367,7 +415,7 @@ function joystick(idx) {
     const s = touchIn[idx]; if (!s) return;
     s.on = m > TT.STICK_DEAD; s.dx = dx; s.dy = dy;
   };
-  const reset = (before = Infinity) => { if (pid != null && downAt > before) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
+  const reset = (before = Infinity) => { if (pid != null && downAt > before) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.dx = s.dy = 0; } };
   el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; downAt = performance.now(); try { el.setPointerCapture(pid); } catch {} upd(e); });
   el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
   const end = e => { if (e.pointerId === pid) reset(); };
@@ -379,7 +427,7 @@ function joystick(idx) {
 // `before`: only drop touches that started before this time (a late resize must not kill a fresh touch).
 function resetTouch(before = Infinity) {
   sticks.forEach(f => f(before)); if (before !== Infinity) return;
-  touchIn.forEach(s => s && Object.assign(s, blankPad()));
+  touchIn.forEach(s => s && Object.assign(s, blankPad(s.mode)));
   document.querySelectorAll('.fire.on').forEach(e => e.classList.remove('on'));
 }
 let lastOrient = null;
@@ -392,26 +440,35 @@ addEventListener('resize', onViewport); addEventListener('orientationchange', ()
 if (screen.orientation) screen.orientation.addEventListener('change', () => { resetTouch(); onViewport(); });
 addEventListener('blur', resetTouch); document.addEventListener('visibilitychange', () => document.hidden && resetTouch());
 onViewport();
-function fireBtn(idx, color) {
-  const el = document.createElement('div'); el.className = 'fire'; el.textContent = 'FIRE'; el.style.background = color;
-  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); try { el.setPointerCapture(e.pointerId); } catch {} touchIn[idx].f = true; el.classList.add('on'); });
-  const end = () => { if (touchIn[idx]) touchIn[idx].f = false; el.classList.remove('on'); };
-  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+function holdBtn(idx, cls, label, key, color) {
+  const el = document.createElement('div'); el.className = cls; el.textContent = label; if (color) el.style.background = color;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); try { el.setPointerCapture(e.pointerId); } catch {} if (touchIn[idx]) touchIn[idx][key] = true; el.classList.add('on'); });
+  const end = () => { if (touchIn[idx]) touchIn[idx][key] = false; el.classList.remove('on'); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
   return el;
+}
+const fireBtn = (idx, color) => holdBtn(idx, 'fire', 'FIRE', 'f', color);
+const revBtn = idx => holdBtn(idx, 'fire rev', 'REVERSE', 'rev');
+// FIRE (+ REVERSE in point mode) as one group
+function buttons(idx, color) {
+  const g = document.createElement('div'); g.className = 'btns'; const f = fireBtn(idx, color); g.append(f);
+  if (stickModes[idx] === 'point') g.append(revBtn(idx));
+  g.fire = f; return g;
 }
 let padMode = null;
 function setupTouch(m) {
   padMode = m; const L = $('padL'), R = $('padR'); L.innerHTML = R.innerHTML = ''; touchIn[0] = touchIn[1] = null; sticks.length = 0;
   if (!m) { show('padL', false); show('padR', false); return; }
-  touchIn[0] = blankPad();
-  if (m === 'local2') {
-    touchIn[1] = blankPad();
-    L.append(fireBtn(0, COLORS[0]), joystick(0)); R.append(fireBtn(1, COLORS[1]), joystick(1));
+  touchIn[0] = blankPad(stickModes[0]);
+  document.body.classList.toggle('two', m === 'local2');
+  if (m === 'local2') { // Red on the left half, Green on the right half; each: stick on the outside, buttons inside
+    touchIn[1] = blankPad(stickModes[1]);
+    L.append(joystick(0), buttons(0, COLORS[0])); R.append(buttons(1, COLORS[1]), joystick(1));
   } else if (m === 'local1') {
-    L.append(joystick(0)); R.append(fireBtn(0, COLORS[0]));
+    L.append(joystick(0)); R.append(buttons(0, COLORS[0]));
   } else { // online: stick left, fire right
     const me = () => (net && net.players.find(p => p.id === net.you)) || { color: 0 };
-    L.append(joystick(0)); const f = fireBtn(0, COLORS[me().color]); R.append(f); setTimeout(() => (f.style.background = COLORS[me().color]), 1500);
+    L.append(joystick(0)); const g = buttons(0, COLORS[me().color]); R.append(g); setTimeout(() => (g.fire.style.background = COLORS[me().color]), 1500);
   }
   show('padL', true); show('padR', true);
 }
@@ -687,10 +744,12 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let view = null;
   if (mode === 'local' && game) { localTick(dt); view = localView(); }
-  else if (mode === 'online' && net) { onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
+  else if (mode === 'online' && net) { net.frameDt = dt; onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
   render(view, dt);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+// PWA: offline app shell (served pages only; the single-file tank-tussle.html skips it)
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.TT_SINGLE) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down, drawTank, ctx, get paused() { return paused; }, set paused(v) { paused = v; } };
 })();

@@ -4,17 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="icon" href="data:,">
-<meta name="theme-color" content="#cfcfcf">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tank Tussle">
+<meta name="application-name" content="Tank Tussle">
+<meta name="theme-color" content="#0b1020">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <title>Tank Tussle — a Tank Trouble-style remake</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   img, canvas, input, button, select { max-width: 100%; }
-  html, body { margin: 0; height: 100%; width: 100%; overflow-x: hidden; background: #cfcfcf; font-family: Verdana, Geneva, Tahoma, sans-serif; color: #333; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
-  canvas#c { position: fixed; inset: 0; display: block; }
-  .overlay { position: fixed; inset: 0; display: flex; align-items: flex-start; justify-content: center; overflow-x: hidden; background: rgba(207,207,207,.92); z-index: 10; overflow: auto; touch-action: auto; padding: 12px; }
+  /* the page never scrolls: fixed full-screen body, no rubber-banding / pull-to-refresh */
+  html { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body { position: fixed; inset: 0; height: 100vh; height: 100dvh; overscroll-behavior: none; }
+  html, body { margin: 0; width: 100%; overflow: hidden; background: #cfcfcf; font-family: Verdana, Geneva, Tahoma, sans-serif; color: #333; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+  canvas#c { position: fixed; inset: 0; display: block; touch-action: none; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: flex-start; justify-content: center; overflow: hidden; overscroll-behavior: none; background: rgba(207,207,207,.92); z-index: 10; overflow: auto; touch-action: auto; padding: 12px; }
   .hidden { display: none !important; }
-  .panel { background: #f4f4f4; border: 3px solid #555; border-radius: 6px; padding: 18px 22px; max-width: 760px; width: 100%; box-shadow: 0 6px 0 #999; margin: auto; min-width: 0; }
+  .panel { background: #f4f4f4; border: 3px solid #555; border-radius: 6px; padding: 18px 22px; max-width: 760px; width: 100%; box-shadow: 0 6px 0 #999; margin: auto; min-width: 0; transform-origin: top center; }
   h1 { margin: 0; font-size: 40px; letter-spacing: 3px; text-align: center; color: #444; text-shadow: 2px 2px 0 #bbb; }
   .sub { text-align: center; color: #777; font-size: 12px; margin: 2px 0 14px; }
   .cols { display: flex; gap: 18px; flex-wrap: wrap; }
@@ -29,6 +39,47 @@
   input { font: inherit; padding: 7px 8px; border: 2px solid #888; border-radius: 4px; width: 100%; background: #fff; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
   .row > input { flex: 1 1 120px; min-width: 0; }
+  .seg > span:first-child { width: 72px; flex: 0 0 auto; }
+  .foot { margin-top: 12px; text-align: center; }
+  /* tabs: only when both columns don't fit (narrow or short screens); otherwise side by side */
+  .tabs { display: none; gap: 6px; margin: 8px 0 6px; }
+  .tabs button { flex: 1; }
+  @media (max-width: 759px), (max-height: 699px) {
+    .tabs { display: flex; }
+    .cols .col { display: none; } .cols .col.active { display: block; }
+    .col h2 { display: none; }
+    .foot { display: none; }
+  }
+  /* short screens: no help text, tighter spacing */
+  @media (max-height: 699px) {
+    .help { display: none !important; }
+    .overlay { padding: 6px; }
+    .panel { padding: 8px 14px; }
+    h1 { font-size: 26px; }
+    .row { margin: 5px 0; }
+    button { padding: 6px 12px; }
+    .col { padding: 8px 10px; }
+    #roomCode { font-size: 30px; margin: 0; }
+    #lobby h2 { margin: 0; font-size: 13px; }
+    #plist { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; margin: 4px 0; }
+    #plist li { padding: 2px 6px; margin: 2px 0; font-size: 13px; }
+  }
+  @media (max-height: 420px) { h1 { font-size: 20px; letter-spacing: 2px; } .tabs { margin: 4px 0; } .row { margin: 4px 0; } }
+  button.team { min-height: 30px; }
+  /* landscape phones: lobby in two columns (room + players | settings + start) */
+  @media (max-height: 520px) and (min-width: 560px) {
+    #lobby .panel { max-width: 760px !important; }
+    .lobbygrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0 14px; align-items: start; }
+  }
+  .sticksel { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1 1 auto; }
+  .sticksel .sg { display: inline-flex; gap: 4px; align-items: center; }
+  .sticksel .sg i { font-style: normal; font-weight: bold; font-size: 12px; }
+  .btns { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .fire.rev { width: 74px; height: 74px; font-size: 11px; background: #555; }
+  body.portrait .btns { flex-direction: row; }
+  body:not(.portrait) .pad.left { flex-direction: column-reverse; } /* landscape: both sticks low, buttons above */
+  body.portrait.two .pad { width: 50%; } body.portrait.two .joy { width: 100px; height: 100px; } body.portrait.two .fire { width: 64px; height: 64px; font-size: 13px; } body.portrait.two .fire.rev { width: 56px; height: 56px; font-size: 9px; }
+  body.portrait.two .btns { flex-direction: column; gap: 6px; }
   .keys { font-size: 12px; line-height: 1.7; margin-top: 10px; }
   .keys .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(0,0,0,.4); }
   kbd { background: #fff; border: 1px solid #999; border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; font-size: 11px; font-family: inherit; }
@@ -37,7 +88,7 @@
   #roomCode { font-size: 44px; letter-spacing: 8px; text-align: center; font-weight: bold; margin: 4px 0; }
   #plist { list-style: none; padding: 0; margin: 10px 0; }
   #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
-  #menuBtn { position: fixed; top: 8px; left: 8px; z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
+  #menuBtn { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left)); z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
   #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
   /* team mode */
   .teampick { flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -46,7 +97,8 @@
   #plist button.team:disabled { opacity: 1; cursor: default; }
   /* touch controls */
   .pad { position: fixed; top: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; justify-content: space-around; align-items: center; padding: 10px 0; touch-action: none; }
-  .pad.left { left: 0; } .pad.right { right: 0; }
+  .pad.left { left: env(safe-area-inset-left); } .pad.right { right: env(safe-area-inset-right); }
+  .overlay { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .joy { width: 128px; height: 128px; border-radius: 50%; background: rgba(80,80,80,.18); border: 3px solid rgba(80,80,80,.45); position: relative; touch-action: none; }
   .joy .knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(70,70,70,.55); }
   .fire { width: 92px; height: 92px; border-radius: 50%; border: 3px solid rgba(0,0,0,.45); color: #fff; font-weight: bold; font-size: 16px; display: flex; align-items: center; justify-content: center; touch-action: none; opacity: .85; }
@@ -63,7 +115,7 @@
     h1 { font-size: 28px; letter-spacing: 2px; }
     button { padding: 7px 8px; font-size: 14px; }
     .row { gap: 6px; }
-    .seg > span:first-child { width: 100% !important; font-size: 13px; color: #555; margin-bottom: -2px; }
+    .seg > span:first-child { width: 100%; font-size: 13px; color: #555; margin-bottom: -2px; }
     .seg > button { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
     .seg > button.team { flex: 0 1 auto; }
     #botRow > b, .seg > b { flex: 0 0 auto; }
@@ -85,54 +137,59 @@
 <div id="menu" class="overlay">
   <div class="panel">
     <h1>TANK TUSSLE</h1>
-    <div class="sub">a fan remake in the spirit of the classic 2015 Tank Trouble · simple mazes, slow bouncing bullets, one hit and you're out</div>
+    <div class="sub help">a fan remake in the spirit of the classic 2015 Tank Trouble · simple mazes, slow bouncing bullets, one hit and you're out</div>
+    <div class="tabs" role="tablist"><button data-tab="local" class="sel">This device</button><button data-tab="online">Online</button></div>
     <div class="cols">
-      <div class="col">
+      <div class="col active" data-col="local">
         <h2>Same keyboard</h2>
-        <div class="row seg" id="modeSel"><span style="width:64px">Mode:</span>
+        <div class="row seg" id="modeSel"><span>Mode:</span>
           <button data-m="ffa" class="sel">Free-for-all</button><button data-m="teams">Teams</button>
         </div>
         <div class="row teampick hidden" id="teamPick"></div>
-        <div class="row seg" id="nSel"><span style="width:64px">Players:</span>
+        <div class="row seg" id="nSel"><span>Players:</span>
           <button data-n="0">0</button><button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
         </div>
-        <div class="row seg"><span style="width:64px">Bots:</span>
+        <div class="row seg"><span>Bots:</span>
           <button id="botMinus">−</button><b id="botN" style="min-width:22px;text-align:center">0</b><button id="botPlus">+</button>
-          <span class="muted">(max 8 tanks)</span>
+          <span class="muted help">(max 8 tanks)</span>
         </div>
-        <div class="row seg" id="lvlSel"><span style="width:64px">Bot skill:</span>
+        <div class="row seg" id="lvlSel"><span>Bot skill:</span>
           <button data-l="easy">Easy</button><button data-l="normal" class="sel">Normal</button><button data-l="hard">Hard</button>
         </div>
+        <div class="row seg hidden" id="stickRow"><span>Stick:</span><span id="stickSel" class="sticksel"></span></div>
         <div class="row"><button class="go" id="playLocal" style="flex:1">Play ▶</button></div>
-        <div class="keys" id="keysLocal"></div>
-        <div class="muted" id="touchNote" style="margin-top:6px"></div>
+        <div class="keys help" id="keysLocal"></div>
+        <div class="muted help" id="touchNote" style="margin-top:6px"></div>
       </div>
-      <div class="col">
+      <div class="col" data-col="online">
         <h2>Online (own PC/phone each)</h2>
         <div class="row"><input id="name" maxlength="14" placeholder="Your name"></div>
         <div class="row"><input id="server" placeholder="Server URL (blank = this site)" style="font-size:12px"></div>
         <div class="row"><button class="go" id="create" style="flex:1">Create room</button></div>
         <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1">Join room</button></div>
         <div class="err" id="err"></div>
-        <div class="keys">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
+        <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
+    <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
 <div id="lobby" class="overlay hidden">
   <div class="panel" style="max-width:440px">
+    <div class="lobbygrid"><div class="lcol">
     <h2 style="text-align:center">Room code</h2>
     <div id="roomCode">----</div>
     <div class="row"><input id="link" readonly><button id="copy" style="white-space:nowrap">Copy link</button></div>
-    <div class="row seg hidden" id="modeRow"><span style="width:70px">Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
+    <div class="row seg hidden" id="modeRow"><span>Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
     <ul id="plist"></ul>
-    <div class="row seg hidden" id="botRow"><span style="width:70px">Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted">(max 8 tanks)</span></div>
-    <div class="row seg hidden" id="lvlRow"><span style="width:70px">Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
+    </div><div class="lcol">
+    <div class="row seg hidden" id="botRow"><span>Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted help">(max 8 tanks)</span></div>
+    <div class="row seg hidden" id="lvlRow"><span>Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
     <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
     <div class="row"><button id="leave">Leave room</button></div>
-    <div class="muted">Controls: arrows + Space/M · on phone: on-screen stick + FIRE</div>
+    <div class="muted help">Controls: arrows + Space/M · on phone: on-screen stick + FIRE</div>
+    </div></div>
   </div>
 </div>
 

@@ -7,7 +7,7 @@ const TTBots = require('./public/bots.js');
 
 const PORT = +process.env.PORT || 8090;
 const PUB = path.join(__dirname, 'public');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
 const TICK = 1 / 60, SEND_EVERY = 2;      // 60 Hz simulation, 30 Hz snapshots
 const MAX_TANKS = 8, RECONNECT_GRACE_MS = 30000;
 const LEVELS = ['easy', 'normal', 'hard'];

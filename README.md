@@ -28,7 +28,10 @@ Open http://localhost:8090 in a browser.
 | P3 | Blue   | I / J / K / L | U |
 | P4 | Yellow | Numpad 8 / 4 / 5 / 6 | Numpad 0 |
 
-On a phone/tablet the stick works like the keys, relative to the tank: up = forward, down = reverse, left/right = turn, diagonals combine them (portrait or landscape). Two players can share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
+On a phone/tablet pick a **Stick** mode on the start screen (per player when two share a phone; remembered):
+- **Tank** (default): like the keys, relative to the tank: up = forward, down = reverse, left/right = turn, diagonals combine.
+- **Point**: the tank turns to face where you point and drives; hold **REVERSE** (next to FIRE) to back up while the stick still steers.
+Both modes send the same keys as the keyboard, so online play needs nothing extra. Sticks use plain screen axes (up on the screen = forward). Two players can share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
 (Local mode also works by just opening `public/index.html` from disk.)
 
 **Online (each player on their own PC/phone)** — needs the server (see *Server setup* below):
@@ -153,6 +156,10 @@ Commit and push; Pages serves it. Alternatives without editing: open the page wi
 CORS: WebSockets accept any origin and `/health` sends `Access-Control-Allow-Origin: *`, so the Pages origin can connect.
 Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed content) — the server needs TLS (`wss://`).
 
+### Install as an app (PWA)
+The site is installable ("Add to Home Screen"): `manifest.webmanifest`, icons in `public/icons/`, and a service worker (`sw.js`) that caches the app so local play works offline. It never touches the game server (WebSocket `/ws`, `/health`, other origins).
+Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG) → `node tools/render_icons.js` (PNGs) → `node tools/icon_preview.js` (preview sheet).
+
 ### Rebuilding the client copies
 
 `public/` is the source. After editing it run `python3 build.py` — it rebuilds the single-file `tank-tussle.html`
@@ -162,5 +169,5 @@ Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed cont
 
 `tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
 - `node tests/stick-unit.js` and `node tests/teams-unit.js` are pure Node (no browser).
-- `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby fit 320 px → desktop) use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
+- `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby/game fit without scrolling, 320 px → desktop) and `tests/pwa-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
 `TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).
