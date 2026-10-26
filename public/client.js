@@ -123,7 +123,7 @@ function localTick(dt) {
     const inputs = {};
     game.players.forEach((p, i) => {
       if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
-      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, touchIn[i]); inputs[p.id] = k;
+      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i], game.tanks[p.id] && game.tanks[p.id].a, 1 / 60)); inputs[p.id] = k;
     });
     TT.step(game, inputs, 1 / 60); tapped.clear();
     handleEvents(game.events.splice(0), id => game.tanks[id]);
@@ -219,8 +219,9 @@ function renderLobby() {
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function onlineInput() {
   let k = inOverlay() ? { u: 0, d: 0, l: 0, r: 0, f: 0 } : readKeys(ONLINE_KEYS);
-  if (touchIn[0]) k = merge(k, touchIn[0]);
-  const s = JSON.stringify(k), now = performance.now();
+  const now = performance.now();
+  if (touchIn[0] && !inOverlay()) k = merge(k, stickInput(touchIn[0], myAngle(now), net.frameDt || 1 / 60));
+  const s = JSON.stringify(k);
   tapped.clear();
   if (s !== net.lastSent || now - net.lastSentAt > 250) {
     net.send({ t: 'input', k, s: ++net.seq }); net.lastSent = s; net.lastSentAt = now;
@@ -228,6 +229,12 @@ function onlineInput() {
   }
 }
 // Own-tank prediction: the server's last state for us, plus our inputs it hasn't applied yet, replayed locally.
+// Our tank's angle as we predict it right now (what the player sees), falling back to the latest snapshot.
+function myAngle(now) {
+  if (net.pb) return predictAt(net.pb, now).a;
+  const sn = net.snaps[net.snaps.length - 1], t = sn && sn.tanks.get(net.you);
+  return t ? t.a : null;
+}
 function predictAt(b, to) {
   const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
   if (b.frozen) return p;
@@ -321,36 +328,66 @@ function handleEvents(evs, tankOf) {
 }
 
 // ---------- touch controls ----------
+// The stick is direction-based: point it where the tank should go. Each frame stickInput() turns the stick angle
+// into plain l/r/u keys from the tank's current angle, so local play, the server and online prediction all run
+// the exact same key-driven movement (and older servers keep working).
 const touchIn = [null, null];
+const STICK_DEAD = 0.25; // fraction of the stick radius that counts as "centered"
+const blankPad = () => ({ u: false, d: false, l: false, r: false, f: false, on: false, ang: 0 });
+function stickInput(s, tankAngle, dt) {
+  if (!s.on || tankAngle == null) return { u: false, d: false, l: false, r: false, f: s.f };
+  return Object.assign(TT.stickKeys(tankAngle, s.ang, C.TANK_ROT * Math.max(1 / 60, dt)), { f: s.f });
+}
+const sticks = [];
 function joystick(idx) {
   const el = document.createElement('div'); el.className = 'joy'; el.innerHTML = '<div class="knob"></div>';
   const knob = el.firstChild; let pid = null;
   const upd = e => {
-    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2;
+    // Measured fresh every move, in the same viewport (screen) pixels the canvas is drawn in, so the centre and
+    // size are right after any resize or rotation. Up on screen is always up in the maze.
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2 || 1;
     let dx = (e.clientX - cx) / R, dy = (e.clientY - cy) / R; const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
     knob.style.transform = `translate(${dx * R * 0.6}px,${dy * R * 0.6}px)`;
-    const s = touchIn[idx]; s.u = dy < -0.35; s.d = dy > 0.35; s.l = dx < -0.35; s.r = dx > 0.35;
+    const s = touchIn[idx]; if (!s) return;
+    s.on = m > STICK_DEAD; if (s.on) s.ang = Math.atan2(dy, dx);
   };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; el.setPointerCapture(pid); upd(e); });
+  const reset = () => { pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; try { el.setPointerCapture(pid); } catch {} upd(e); });
   el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
-  const end = e => { if (e.pointerId !== pid) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; s.u = s.d = s.l = s.r = false; };
-  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  const end = e => { if (e.pointerId === pid) reset(); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
+  sticks.push(reset);
   return el;
 }
+// Rotating the phone (or any resize) can swallow the finger's pointerup; drop stale touches so nothing stays stuck.
+function resetTouch() {
+  sticks.forEach(f => f()); touchIn.forEach(s => s && Object.assign(s, blankPad()));
+  document.querySelectorAll('.fire.on').forEach(e => e.classList.remove('on'));
+}
+let lastOrient = null;
+function onViewport() {
+  const o = innerWidth >= innerHeight ? 'land' : 'port';
+  document.body.classList.toggle('portrait', o === 'port');
+  if (o !== lastOrient) { if (lastOrient) resetTouch(); lastOrient = o; }
+}
+addEventListener('resize', onViewport); addEventListener('orientationchange', () => { resetTouch(); onViewport(); });
+if (screen.orientation) screen.orientation.addEventListener('change', () => { resetTouch(); onViewport(); });
+addEventListener('blur', resetTouch); document.addEventListener('visibilitychange', () => document.hidden && resetTouch());
+onViewport();
 function fireBtn(idx, color) {
   const el = document.createElement('div'); el.className = 'fire'; el.textContent = 'FIRE'; el.style.background = color;
-  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); el.setPointerCapture(e.pointerId); touchIn[idx].f = true; el.classList.add('on'); });
-  const end = () => { touchIn[idx].f = false; el.classList.remove('on'); };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); try { el.setPointerCapture(e.pointerId); } catch {} touchIn[idx].f = true; el.classList.add('on'); });
+  const end = () => { if (touchIn[idx]) touchIn[idx].f = false; el.classList.remove('on'); };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
   return el;
 }
 let padMode = null;
 function setupTouch(m) {
-  padMode = m; const L = $('padL'), R = $('padR'); L.innerHTML = R.innerHTML = ''; touchIn[0] = touchIn[1] = null;
+  padMode = m; const L = $('padL'), R = $('padR'); L.innerHTML = R.innerHTML = ''; touchIn[0] = touchIn[1] = null; sticks.length = 0;
   if (!m) { show('padL', false); show('padR', false); return; }
-  touchIn[0] = { u: false, d: false, l: false, r: false, f: false };
+  touchIn[0] = blankPad();
   if (m === 'local2') {
-    touchIn[1] = { u: false, d: false, l: false, r: false, f: false };
+    touchIn[1] = blankPad();
     L.append(fireBtn(0, COLORS[0]), joystick(0)); R.append(fireBtn(1, COLORS[1]), joystick(1));
   } else if (m === 'local1') {
     L.append(joystick(0)); R.append(fireBtn(0, COLORS[0]));
@@ -364,11 +401,12 @@ function setupTouch(m) {
 // ---------- rendering ----------
 function layout(maze) {
   const W = innerWidth, H = innerHeight;
-  const side = padMode ? Math.min(180, Math.max(120, W * 0.19)) : 10;
-  const hud = Math.max(44, Math.min(70, H * 0.12));
+  const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
+  const side = padMode && !port ? Math.min(180, Math.max(120, W * 0.19)) : 10;
+  const hud = Math.max(44, Math.min(70, H * 0.12)), bot = padMode && port ? 160 : 0;
   const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
-  const s = Math.min((W - side * 2) / mw, (H - hud - 16) / mh);
-  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - maze.rows * C.CELL * s) / 2), hud, side };
+  const s = Math.min((W - side * 2) / mw, (H - hud - bot - 16) / mh);
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - bot - maze.rows * C.CELL * s) / 2), hud, side, bot };
 }
 // Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
 function drawTurret(w, color, charge = 0) {
@@ -573,7 +611,7 @@ function render(view, dt) {
   }
   ctx.globalAlpha = 1; ctx.restore();
   // HUD: scores + current weapon at the bottom
-  const ps = view.players, n = ps.length, hy = innerHeight - L.hud / 2 - 4;
+  const ps = view.players, n = ps.length, hy = innerHeight - L.bot - L.hud / 2 - 4;
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
   ctx.textBaseline = 'middle';
   ps.forEach((p, i) => {
@@ -607,9 +645,8 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let view = null;
   if (mode === 'local' && game) { localTick(dt); view = localView(); }
-  else if (mode === 'online' && net) { onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
+  else if (mode === 'online' && net) { net.frameDt = dt; onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
   render(view, dt);
-  show('rotate', !!mode && isTouch && innerHeight > innerWidth);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
