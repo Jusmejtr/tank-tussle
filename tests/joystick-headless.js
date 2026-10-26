@@ -9,13 +9,19 @@ const PORT = { width: 390, height: 844, isMobile: true, hasTouch: true, deviceSc
 const LAND = { width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 2, isLandscape: true };
 async function touch(cdp, type, pts) { await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ x, y, id: i })) }); }
 async function stickCenter(p) { return p.$eval('.joy', e => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width / 2]; }); }
-// hold the stick toward screen direction (dx,dy) for ms; return my tank's angle (deg) + last keys
+// hold the stick toward screen direction (dx,dy) for ms; return getA() while still held
 async function hold(p, cdp, dx, dy, ms, getA) {
   const [cx, cy, R] = await stickCenter(p);
   await touch(cdp, 'touchStart', [[cx, cy]]); await touch(cdp, 'touchMove', [[cx + dx * R * 0.9, cy + dy * R * 0.9]]);
   await sleep(ms); const a = await p.evaluate(getA); await touch(cdp, 'touchEnd', []); await sleep(100); return a;
 }
-const DIRS = [['up', 0, -1, -90], ['left', -1, 0, 180], ['down', 0, 1, 90], ['right', 1, 0, 0], ['up-right', 0.707, -0.707, -45]];
+// tank-relative stick: [name, dx, dy, expected keys, expected motion: +1 forward / -1 back / 0 none, turn: -1 left / +1 right / 0]
+const DIRS = [['up', 0, -1, 'u', 1, 0], ['down', 0, 1, 'd', -1, 0], ['left', -1, 0, 'l', 0, -1], ['right', 1, 0, 'r', 0, 1],
+  ['up-left', -0.707, -0.707, 'ul', 1, -1], ['down-right', 0.707, 0.707, 'dr', -1, 1]];
+const K = k => (k.u ? 'u' : '') + (k.d ? 'd' : '') + (k.l ? 'l' : '') + (k.r ? 'r' : '');
+// start state -> end state: distance moved along the starting heading, and the turn (deg)
+const motion = (s0, s1) => ({ fwd: (s1.x - s0.x) * Math.cos(s0.a) + (s1.y - s0.y) * Math.sin(s0.a), turn: (d => (d > Math.PI ? d - 2 * Math.PI : d < -Math.PI ? d + 2 * Math.PI : d))(s1.a - s0.a) * D });
+const expect = (m, mv, tn) => (mv > 0 ? m.fwd > 8 : mv < 0 ? m.fwd < -8 : Math.abs(m.fwd) < 1) && (tn > 0 ? m.turn > 10 : tn < 0 ? m.turn < -10 : Math.abs(m.turn) < 0.5);
 async function page(vp, url) {
   const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
   const p = await b.newPage(); await p.setViewport(vp); const errs = []; p.on('pageerror', e => errs.push(e.message));
@@ -28,11 +34,12 @@ async function localTest(vp, label, shot) {
     const st = TT.step; TT.step = (g, i, dt) => { window.__in = i[1]; st(g, i, dt); }; });
   await sleep(400);
   ok(await p.$eval('#padL', e => !e.classList.contains('hidden')), 'stick visible');
-  const getA = () => { const t = __tt.game.tanks[1]; return { a: t.a * 180 / Math.PI, k: window.__in }; };
-  for (const [n, dx, dy, want] of DIRS) {
-    await p.evaluate(() => { const t = __tt.game.tanks[1]; t.a = 0.3; });
-    const r = await hold(p, cdp, dx, dy, 1300, getA);
-    ok(angDiff(r.a, want) < 4 && r.k.u && !r.k.l && !r.k.r, `${n}: tank faces ${r.a.toFixed(1)}° (want ${want}°), driving=${!!r.k.u}, turning=${!!(r.k.l || r.k.r)}`);
+  const getS = () => { const t = __tt.game.tanks[1]; return { x: t.x, y: t.y, a: t.a, k: window.__in }; };
+  // open floor (no walls) so movement is never blocked; try several headings so "up" is checked whatever way the tank faces
+  const place = a => p.evaluate(a => { const g = __tt.game; g.rects = []; Object.assign(g.tanks[1], { x: 300, y: 300, a }); g.tanks[2].x = 5000; return { x: 300, y: 300, a }; }, a);
+  for (const a0 of [0.3, 2.2, -1.9]) for (const [n, dx, dy, keys, mv, tn] of DIRS) {
+    const s0 = await place(a0), s1 = await hold(p, cdp, dx, dy, 500, getS), m = motion(s0, s1);
+    ok(K(s1.k) === keys && expect(m, mv, tn), `facing ${(a0 * D).toFixed(0)}°, stick ${n}: keys ${K(s1.k)} (want ${keys}), moved ${m.fwd.toFixed(1)}px along heading, turned ${m.turn.toFixed(1)}°`);
   }
   const k0 = await p.evaluate(() => window.__in); ok(!k0.u && !k0.l && !k0.r, 'released: no movement');
   // dead zone
@@ -52,9 +59,8 @@ async function localTest(vp, label, shot) {
     const k = await p.evaluate(() => window.__in); ok(!k.u && !k.l && !k.r, 'rotated mid-touch: stale touch cleared');
     await touch(cdp, 'touchCancel', []); await sleep(100);
     const nvp = vp.isLandscape ? PORT : LAND;
-    await p.evaluate(() => { __tt.game.tanks[1].a = 0.3; });
-    const r = await hold(p, cdp, 0, -1, 1300, getA);
-    ok(angDiff(r.a, -90) < 4 && r.k.u, `after rotating to ${nvp.width}x${nvp.height}: up -> ${r.a.toFixed(1)}°`);
+    const s0 = await place(1.0), s1 = await hold(p, cdp, 0, -1, 500, getS), m = motion(s0, s1);
+    ok(K(s1.k) === 'u' && expect(m, 1, 0), `after rotating to ${nvp.width}x${nvp.height}: up drives forward (${m.fwd.toFixed(1)}px)`);
   }
   ok(!errs.length, 'no page errors ' + errs.join('; ')); await b.close();
 }
@@ -64,15 +70,23 @@ async function onlineTest(vp, label) {
   await p.type('#name', 'Phone'); await p.click('#create');
   await p.waitForFunction(() => __tt.net && __tt.net.code, { timeout: 15000 }); await sleep(300); await p.click('#start');
   await p.waitForFunction(() => __tt.net.snaps.length > 10 && __tt.net.pb, { timeout: 15000 }); await sleep(500);
-  const getA = () => { const n = __tt.net, s = n.snaps.at(-1).tanks.get(n.you), last = n.sent.at(-1).k; return { a: s.a * 180 / Math.PI, k: last, sent: n.sent.length }; };
-  for (const [n, dx, dy, want] of DIRS.slice(0, 4)) {
-    const r = await hold(p, cdp, dx, dy, 1500, getA);
-    ok(angDiff(r.a, want) < 5 && r.k.u && !r.k.l && !r.k.r, `${n}: server tank ${r.a.toFixed(1)}° (want ${want}°), last sent keys ${JSON.stringify(r.k)}`);
+  // server's view of my tank + the keys last sent. Online there are walls, so a blocked move only has to not go the wrong way.
+  const getS = () => { const n = __tt.net, t = n.snaps.at(-1).tanks.get(n.you); return { x: t.x, y: t.y, a: t.a, k: n.sent.at(-1).k }; };
+  let moved = { 1: 0, '-1': 0 };
+  for (const [n, dx, dy, keys, mv, tn] of DIRS) {
+    const s0 = await p.evaluate(getS), [cx, cy, R] = await stickCenter(p);
+    await touch(cdp, 'touchStart', [[cx, cy]]); await touch(cdp, 'touchMove', [[cx + dx * R * 0.9, cy + dy * R * 0.9]]); await sleep(450);
+    const k = (await p.evaluate(getS)).k; await touch(cdp, 'touchEnd', []); await sleep(350);
+    const m = motion(s0, await p.evaluate(getS));
+    const dirOk = mv > 0 ? m.fwd > -1 : mv < 0 ? m.fwd < 1 : Math.abs(m.fwd) < 1, turnOk = tn > 0 ? m.turn > 10 : tn < 0 ? m.turn < -10 : Math.abs(m.turn) < 0.5;
+    if (mv && Math.abs(m.fwd) > 4) moved[mv]++;
+    ok(K(k) === keys && dirOk && turnOk, `stick ${n}: sent ${K(k)} (want ${keys}), server tank moved ${m.fwd.toFixed(1)}px along heading, turned ${m.turn.toFixed(1)}°`);
   }
+  ok(moved[1] > 0 && moved['-1'] > 0, `server really drove forward (${moved[1]}x) and reversed (${moved['-1']}x)`);
   // prediction and server agree once settled
   await sleep(500);
-  const d = await p.evaluate(() => { const n = __tt.net, s = n.snaps.at(-1).tanks.get(n.you), q = n.pb; return Math.abs(s.a - q.a) * 180 / Math.PI; });
-  ok(d < 1, `prediction base matches server angle (diff ${d.toFixed(2)}°)`);
+  const d = await p.evaluate(() => { const n = __tt.net, s = n.snaps.at(-1).tanks.get(n.you), q = n.pb; return { a: Math.abs(s.a - q.a) * 180 / Math.PI, p: Math.hypot(s.x - q.x, s.y - q.y) }; });
+  ok(d.a < 1 && d.p < 1, `prediction base matches the server (angle ${d.a.toFixed(2)}°, position ${d.p.toFixed(2)}px)`);
   ok(!errs.length, 'no page errors ' + errs.join('; ')); await b.close();
 }
 (async () => {
