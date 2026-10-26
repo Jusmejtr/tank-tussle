@@ -141,7 +141,7 @@ function localTick(dt) {
     const inputs = {};
     game.players.forEach((p, i) => {
       if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
-      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i], game.tanks[p.id] && game.tanks[p.id].a, 1 / 60)); inputs[p.id] = k;
+      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, stickInput(touchIn[i])); inputs[p.id] = k;
     });
     TT.step(game, inputs, 1 / 60); tapped.clear();
     handleEvents(game.events.splice(0), id => game.tanks[id]);
@@ -241,7 +241,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 function onlineInput() {
   let k = inOverlay() ? { u: 0, d: 0, l: 0, r: 0, f: 0 } : readKeys(ONLINE_KEYS);
   const now = performance.now();
-  if (touchIn[0] && !inOverlay()) k = merge(k, stickInput(touchIn[0], myAngle(now), net.frameDt || 1 / 60));
+  if (touchIn[0] && !inOverlay()) k = merge(k, stickInput(touchIn[0]));
   const s = JSON.stringify(k);
   tapped.clear();
   if (s !== net.lastSent || now - net.lastSentAt > 250) {
@@ -250,12 +250,6 @@ function onlineInput() {
   }
 }
 // Own-tank prediction: the server's last state for us, plus our inputs it hasn't applied yet, replayed locally.
-// Our tank's angle as we predict it right now (what the player sees), falling back to the latest snapshot.
-function myAngle(now) {
-  if (net.pb) return predictAt(net.pb, now).a;
-  const sn = net.snaps[net.snaps.length - 1], t = sn && sn.tanks.get(net.you);
-  return t ? t.a : null;
-}
 function predictAt(b, to) {
   const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
   if (b.frozen) return p;
@@ -351,15 +345,14 @@ function handleEvents(evs, tankOf) {
 }
 
 // ---------- touch controls ----------
-// The stick is direction-based: point it where the tank should go. Each frame stickInput() turns the stick angle
-// into plain l/r/u keys from the tank's current angle, so local play, the server and online prediction all run
-// the exact same key-driven movement (and older servers keep working).
+// The stick works like the keyboard, relative to the tank: up = forward, down = reverse, left/right = turn,
+// diagonals combine them. stickInput() turns it into the same u/d/l/r keys, so local play, the server and the
+// online prediction all run the exact same key-driven movement.
 const touchIn = [null, null];
-const STICK_DEAD = 0.25; // fraction of the stick radius that counts as "centered"
-const blankPad = () => ({ u: false, d: false, l: false, r: false, f: false, on: false, ang: 0 });
-function stickInput(s, tankAngle, dt) {
-  if (!s.on || tankAngle == null) return { u: false, d: false, l: false, r: false, f: s.f };
-  return Object.assign(TT.stickKeys(tankAngle, s.ang, C.TANK_ROT * Math.max(1 / 60, dt)), { f: s.f });
+const blankPad = () => ({ u: false, d: false, l: false, r: false, f: false, on: false, dx: 0, dy: 0 });
+function stickInput(s) {
+  if (!s.on) return { u: false, d: false, l: false, r: false, f: s.f };
+  return Object.assign(TT.stickKeys(s.dx, s.dy), { f: s.f });
 }
 const sticks = [];
 function joystick(idx) {
@@ -372,7 +365,7 @@ function joystick(idx) {
     let dx = (e.clientX - cx) / R, dy = (e.clientY - cy) / R; const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
     knob.style.transform = `translate(${dx * R * 0.6}px,${dy * R * 0.6}px)`;
     const s = touchIn[idx]; if (!s) return;
-    s.on = m > STICK_DEAD; if (s.on) s.ang = Math.atan2(dy, dx);
+    s.on = m > TT.STICK_DEAD; s.dx = dx; s.dy = dy;
   };
   const reset = (before = Infinity) => { if (pid != null && downAt > before) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; if (s) { s.on = false; s.u = s.d = s.l = s.r = false; } };
   el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; downAt = performance.now(); try { el.setPointerCapture(pid); } catch {} upd(e); });
@@ -694,7 +687,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   let view = null;
   if (mode === 'local' && game) { localTick(dt); view = localView(); }
-  else if (mode === 'online' && net) { net.frameDt = dt; onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
+  else if (mode === 'online' && net) { onlineInput(); view = onlineView(dt); if (view) view.rects = net.rects; }
   render(view, dt);
   requestAnimationFrame(frame);
 }

@@ -8,16 +8,17 @@
 <meta name="theme-color" content="#cfcfcf">
 <title>Tank Tussle — a Tank Trouble-style remake</title>
 <style>
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; background: #cfcfcf; font-family: Verdana, Geneva, Tahoma, sans-serif; color: #333; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+  *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  img, canvas, input, button, select { max-width: 100%; }
+  html, body { margin: 0; height: 100%; width: 100%; overflow-x: hidden; background: #cfcfcf; font-family: Verdana, Geneva, Tahoma, sans-serif; color: #333; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
   canvas#c { position: fixed; inset: 0; display: block; }
-  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(207,207,207,.92); z-index: 10; overflow: auto; touch-action: auto; padding: 12px; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: flex-start; justify-content: center; overflow-x: hidden; background: rgba(207,207,207,.92); z-index: 10; overflow: auto; touch-action: auto; padding: 12px; }
   .hidden { display: none !important; }
-  .panel { background: #f4f4f4; border: 3px solid #555; border-radius: 6px; padding: 18px 22px; max-width: 760px; width: 100%; box-shadow: 0 6px 0 #999; }
+  .panel { background: #f4f4f4; border: 3px solid #555; border-radius: 6px; padding: 18px 22px; max-width: 760px; width: 100%; box-shadow: 0 6px 0 #999; margin: auto; min-width: 0; }
   h1 { margin: 0; font-size: 40px; letter-spacing: 3px; text-align: center; color: #444; text-shadow: 2px 2px 0 #bbb; }
   .sub { text-align: center; color: #777; font-size: 12px; margin: 2px 0 14px; }
   .cols { display: flex; gap: 18px; flex-wrap: wrap; }
-  .col { flex: 1 1 300px; background: #e6e6e6; border: 2px solid #aaa; border-radius: 5px; padding: 12px; }
+  .col { flex: 1 1 300px; min-width: 0; background: #e6e6e6; border: 2px solid #aaa; border-radius: 5px; padding: 12px; }
   h2 { margin: 0 0 10px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
   button { font: inherit; font-weight: bold; border: 2px solid #444; background: #fff; border-radius: 4px; padding: 8px 14px; cursor: pointer; box-shadow: 0 3px 0 #777; }
   button:disabled { opacity: .45; cursor: default; }
@@ -26,7 +27,8 @@
   button.sel { background: #4c4c4c; color: #fff; }
   .seg button { min-width: 44px; }
   input { font: inherit; padding: 7px 8px; border: 2px solid #888; border-radius: 4px; width: 100%; background: #fff; }
-  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .row > input { flex: 1 1 120px; min-width: 0; }
   .keys { font-size: 12px; line-height: 1.7; margin-top: 10px; }
   .keys .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(0,0,0,.4); }
   kbd { background: #fff; border: 1px solid #999; border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; font-size: 11px; font-family: inherit; }
@@ -53,6 +55,22 @@
   body.portrait .pad { top: auto; bottom: 0; height: 160px; flex-direction: row; justify-content: center; gap: 10px; padding: 0 8px; box-sizing: border-box; }
   body.portrait .joy { width: 116px; height: 116px; }
   body.portrait .fire { width: 80px; height: 80px; }
+  /* narrow phones: labels above their controls, buttons share the row evenly, a bit tighter */
+  @media (max-width: 420px) {
+    .overlay { padding: 8px; }
+    .panel { padding: 12px 10px; }
+    .col { padding: 10px 8px; flex-basis: 100%; }
+    h1 { font-size: 28px; letter-spacing: 2px; }
+    button { padding: 7px 8px; font-size: 14px; }
+    .row { gap: 6px; }
+    .seg > span:first-child { width: 100% !important; font-size: 13px; color: #555; margin-bottom: -2px; }
+    .seg > button { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
+    .seg > button.team { flex: 0 1 auto; }
+    #botRow > b, .seg > b { flex: 0 0 auto; }
+    .seg > .muted { flex: 1 1 100%; }
+    #roomCode { font-size: 36px; letter-spacing: 6px; }
+    #plist li { flex-wrap: wrap; }
+  }
   #rotate { position: fixed; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; text-align: center; background: rgba(207,207,207,.95); font-size: 18px; padding: 30px; }
 </style>
 </head>

@@ -28,7 +28,7 @@ Open http://localhost:8090 in a browser.
 | P3 | Blue   | I / J / K / L | U |
 | P4 | Yellow | Numpad 8 / 4 / 5 / 6 | Numpad 0 |
 
-On a phone/tablet, point the stick where you want the tank to go (portrait or landscape). Two players can share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
+On a phone/tablet the stick works like the keys, relative to the tank: up = forward, down = reverse, left/right = turn, diagonals combine them (portrait or landscape). Two players can share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
 (Local mode also works by just opening `public/index.html` from disk.)
 
 **Online (each player on their own PC/phone)** — needs the server (see *Server setup* below):
@@ -162,5 +162,5 @@ Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed cont
 
 `tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
 - `node tests/stick-unit.js` and `node tests/teams-unit.js` are pure Node (no browser).
-- `tests/joystick-headless.js` and `tests/teams-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
+- `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby fit 320 px → desktop) use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
 `TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).

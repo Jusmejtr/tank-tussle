@@ -378,14 +378,14 @@
     pushCircleOut(t, C.TANK_R, rects);
   }
 
-  // Direction stick -> the same l/r/u keys the keyboard makes, from the tank's current angle.
-  // Turn toward `target` the short way; stop turning once within `step` (one frame of rotation, so no jitter);
-  // drive forward once roughly facing it (within STICK_DRIVE). Screen angles = world angles (y points down).
-  const STICK_DRIVE = 40 * Math.PI / 180;
-  function stickKeys(a, target, step = C.TANK_ROT / 60) {
-    const d = wrapA(target - a), k = { u: false, d: false, l: false, r: false };
-    if (Math.abs(d) > step) { if (d > 0) k.r = true; else k.l = true; }
-    if (Math.abs(d) <= STICK_DRIVE) k.u = true;
+  // Phone stick -> the same keys as the keyboard, tank-relative: up = forward (u), down = reverse (d),
+  // left/right = rotate (l/r); diagonals combine them (up-left = forward + turn left).
+  // dx, dy = stick offset as a fraction of its radius (screen axes, dy < 0 = up). Inside the dead zone: nothing.
+  const STICK_AXIS = 0.38, STICK_DEAD = 0.25;
+  function stickKeys(dx, dy, axis = STICK_AXIS) {
+    const k = { u: false, d: false, l: false, r: false };
+    if (Math.hypot(dx, dy) <= STICK_DEAD) return k;
+    k.u = dy < -axis; k.d = dy > axis; k.l = dx < -axis; k.r = dx > axis;
     return k;
   }
 
@@ -523,5 +523,5 @@
     };
   }
 
-  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
