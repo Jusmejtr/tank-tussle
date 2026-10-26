@@ -115,10 +115,18 @@ Any PaaS that supports WebSockets and sets `$PORT` works too (start command `npm
 
 ### Docker
 
+A ready-made image (linux/amd64 + arm64) is built by GitHub Actions on every push to `master` and is public, no login needed:
+
 ```bash
-docker build -t tank-tussle .
-docker run -d --restart unless-stopped -p 8090:8090 --name tank-tussle tank-tussle
+docker run -d --restart unless-stopped -p 8090:8090 --name tank-tussle ghcr.io/matej-podzemny/tank-tussle:latest
+curl localhost:8090/health   # {"ok":true,...}
 ```
+
+- The container listens on port **8090** (WebSocket path `/ws`). Map it as `-p <host-port>:8090`, or change it with `-e PORT=...`.
+- Update: `docker pull ghcr.io/matej-podzemny/tank-tussle:latest`, then remove and re-run the container.
+- The GitHub Pages site is served over https, so browsers can only connect to a **`wss://`** server. Put the container
+  behind a reverse proxy with TLS (nginx example above, or Caddy/Traefik) and set `docs/config.js` to the `https://` address.
+- Build it yourself instead: `docker build -t tank-tussle . && docker run -d -p 8090:8090 tank-tussle`.
 
 ### Pointing the GitHub Pages client at the server
 
