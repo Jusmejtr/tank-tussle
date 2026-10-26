@@ -356,6 +356,17 @@
     pushCircleOut(t, C.TANK_R, rects);
   }
 
+  // Direction stick -> the same l/r/u keys the keyboard makes, from the tank's current angle.
+  // Turn toward `target` the short way; stop turning once within `step` (one frame of rotation, so no jitter);
+  // drive forward once roughly facing it (within STICK_DRIVE). Screen angles = world angles (y points down).
+  const STICK_DRIVE = 40 * Math.PI / 180;
+  function stickKeys(a, target, step = C.TANK_ROT / 60) {
+    const d = wrapA(target - a), k = { u: false, d: false, l: false, r: false };
+    if (Math.abs(d) > step) { if (d > 0) k.r = true; else k.l = true; }
+    if (Math.abs(d) <= STICK_DRIVE) k.u = true;
+    return k;
+  }
+
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
@@ -482,5 +493,5 @@
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
