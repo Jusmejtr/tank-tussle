@@ -10,6 +10,10 @@
     TANK_SPEED: 105, TANK_ROT: 3.4, ROUND_END_DELAY: 3,
     OWNER_GRACE: 0.05,
   };
+  // Team mode: two teams, Red (0) and Blue (1). Friendly fire is ON like the original; flip to false to make
+  // teammates' shots (bullets, lasers, frags, mines...) pass through you. Your own shots can always hit you.
+  const FRIENDLY_FIRE = true;
+  const TEAM_COLORS = ['#d8342c', '#2f6fd6'], TEAM_NAMES = ['Red', 'Blue'];
   const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
   const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
 
@@ -136,13 +140,28 @@
 
   // ---------- Game ----------
   function createGame() {
-    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [] };
+    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0] };
   }
+  // ---------- teams ----------
+  const teamOf = (g, id) => { const p = g.players.find(p => p.id === id); return p ? p.team : -1; };
+  // true when a and b are different tanks on the same team (only in team mode)
+  const sameTeam = (g, a, b) => g.mode === 'teams' && a !== b && teamOf(g, a) >= 0 && teamOf(g, a) === teamOf(g, b);
+  // Balance: humans alternate Red/Blue, then each bot joins the smaller team. `list` = [{bot}], returns team per entry.
+  function balanceTeams(list) {
+    const out = [], n = [0, 0]; let h = 0;
+    list.forEach((x, i) => { if (!x.bot) { out[i] = h++ % 2; n[out[i]]++; } });
+    list.forEach((x, i) => { if (x.bot) { out[i] = n[0] <= n[1] ? 0 : 1; n[out[i]]++; } });
+    return out;
+  }
+  function setMode(g, mode) { g.mode = mode === 'teams' ? 'teams' : 'ffa'; }
+  function setTeam(g, id, team) { const p = g.players.find(p => p.id === id); if (p) p.team = team ? 1 : 0; }
   function addPlayer(g, p) {
     const used = new Set(g.players.map(q => q.color));
     let ci = p.colorIndex;
     if (ci == null || used.has(ci)) { ci = 0; while (used.has(ci)) ci++; }
-    const pl = { id: p.id, name: p.name || COLOR_NAMES[ci], color: ci, score: 0 };
+    let team = p.team;
+    if (team !== 0 && team !== 1) { const n = [0, 1].map(k => g.players.filter(q => q.team === k).length); team = n[0] <= n[1] ? 0 : 1; }
+    const pl = { id: p.id, name: p.name || COLOR_NAMES[ci], color: ci, score: 0, team };
     g.players.push(pl);
     return pl;
   }
@@ -217,9 +236,11 @@
   }
 
   function kill(g, t, by, cause) {
-    if (!t.alive) return;
+    if (!t.alive) return false;
+    if (!FRIENDLY_FIRE && sameTeam(g, t.id, by)) return false;
     t.alive = false;
     g.events.push({ type: 'die', id: t.id, x: t.x, y: t.y, by, cause });
+    return true;
   }
   function spawnProjectile(g, t, kind, speed, extra) {
     const a = t.a + (extra && extra.spread ? rand(-extra.spread, extra.spread) : 0);
@@ -239,10 +260,11 @@
   function deathRayPath(g, t, a) {
     const Wd = g.maze.cols * C.CELL, Hd = g.maze.rows * C.CELL, step = 2;
     let x = t.x + Math.cos(a) * 8, y = t.y + Math.sin(a) * 8;
-    const pts = [[x, y]], hits = [], foes = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+    const pts = [[x, y]], hits = [], foes = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id && (FRIENDLY_FIRE || !sameTeam(g, o.id, t.id)));
+    const bendTo = foes.filter(o => !sameTeam(g, o.id, t.id)); // the ray only bends towards enemies
     for (let d = 0; d < W.RAY_LEN; d += step) {
       let best = null, bd = 1e9;
-      for (const o of foes) {
+      for (const o of bendTo) {
         if (hits.includes(o.id)) continue;
         const dist = Math.hypot(o.x - x, o.y - y), off = wrapA(Math.atan2(o.y - y, o.x - x) - a);
         if (Math.abs(off) < W.RAY_CONE && dist < bd) { bd = dist; best = off; }
@@ -269,7 +291,7 @@
         let hitAny = false;
         for (const o of Object.values(g.tanks)) {
           if (!o.alive || (o.id === t.id && d < 30)) continue;
-          if (Math.hypot(o.x - x, o.y - y) < C.TANK_R) { kill(g, o, t.id, kind); hitAny = true; }
+          if (Math.hypot(o.x - x, o.y - y) < C.TANK_R && kill(g, o, t.id, kind)) hitAny = true;
         }
         if (hitAny) { // laser stops at first victim
           cut = ray.pts.filter(p => p[2] < d); cut.push([x, y]); break;
@@ -429,7 +451,7 @@
         if (!t.alive) continue;
         if (t.id === b.owner && b.age < (b.grace != null ? b.grace : C.OWNER_GRACE)) continue;
         const dx = t.x - b.x, dy = t.y - b.y, r = C.TANK_R + b.r - 1;
-        if (dx * dx + dy * dy < r * r) { kill(g, t, b.owner, b.kind); hit = true; break; }
+        if (dx * dx + dy * dy < r * r && (FRIENDLY_FIRE || !sameTeam(g, t.id, b.owner))) { kill(g, t, b.owner, b.kind); hit = true; break; }
       }
       if (hit && b.kind === 'bomb') burstFrag(g, b);
       if (!hit) keep.push(b);
@@ -458,13 +480,20 @@
     // round flow
     const alive = tanks.filter(t => t.alive);
     if (g.phase === 'play') {
-      const over = g.players.length >= 2 ? alive.length <= 1 : alive.length === 0;
+      let over;
+      if (g.mode === 'teams') { // over when only one team has tanks left (or nobody, if only one team is playing)
+        const playing = new Set(tanks.map(t => teamOf(g, t.id))), left = new Set(alive.map(t => teamOf(g, t.id)));
+        over = playing.size >= 2 ? left.size <= 1 : alive.length === 0;
+      } else over = g.players.length >= 2 ? alive.length <= 1 : alive.length === 0;
       if (over && tanks.length) { g.phase = 'ending'; g.endTimer = C.ROUND_END_DELAY; }
     } else if (g.phase === 'ending') {
       g.endTimer -= dt;
       if (g.endTimer <= 0) {
         const still = Object.values(g.tanks).filter(t => t.alive);
-        if (still.length === 1 && g.players.length >= 2) {
+        if (g.mode === 'teams') {
+          const left = [...new Set(still.map(t => teamOf(g, t.id)))], playing = new Set(Object.keys(g.tanks).map(id => teamOf(g, +id)));
+          if (left.length === 1 && left[0] >= 0 && playing.size >= 2) { g.teamScore[left[0]]++; g.events.push({ type: 'point', team: left[0] }); }
+        } else if (still.length === 1 && g.players.length >= 2) {
           const p = g.players.find(p => p.id === still[0].id); if (p) { p.score++; g.events.push({ type: 'point', id: p.id }); }
         }
         newRound(g);
@@ -489,9 +518,10 @@
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
-      sc: g.players.map(p => [p.id, p.score]),
+      sc: g.players.map(p => [p.id, p.score, p.team]),
+      md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,
     };
   }
 
-  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { C, W, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });

@@ -28,7 +28,7 @@ Open http://localhost:8090 in a browser.
 | P3 | Blue   | I / J / K / L | U |
 | P4 | Yellow | Numpad 8 / 4 / 5 / 6 | Numpad 0 |
 
-On a phone/tablet (landscape) two players share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
+On a phone/tablet, point the stick where you want the tank to go (portrait or landscape). Two players can share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
 (Local mode also works by just opening `public/index.html` from disk.)
 
 **Online (each player on their own PC/phone)** — needs the server (see *Server setup* below):
@@ -39,6 +39,15 @@ On a phone/tablet (landscape) two players share the screen: Red = left stick + F
 If a connection drops, the client reconnects automatically and gets its tank back (slot is kept for 30 s).
 
 Esc / ☰ opens the menu (the host can end the game and return everyone to the lobby).
+
+**Free-for-all or Teams** — pick the mode on the title screen (local) or in the lobby (online, host only).
+- *Free-for-all* (default): last tank standing scores a point.
+- *Teams*: **Red vs Blue**. Humans are spread across both teams first, then bots fill up the smaller team.
+  Switch someone's team by tapping their team badge on the title screen (local), or with **Switch my team** in the lobby (online; the host can tap anyone's badge, e.g. to move bots).
+  Every tank keeps its own colour and gets a ring in its team colour. The top bar shows the team score, and the round ends when only one team has tanks left; that team scores a point.
+- Friendly fire is **on** (Tank Trouble style: your own and your teammates' bullets can kill you). To turn it off, set `FRIENDLY_FIRE = false` in `public/game.js` and run `python3 build.py`.
+- Bots never target teammates, hold fire when a teammate is in the line of fire (or near a frag bomb or mine), and don't treat teammates as enemies.
+- Online, the server decides the mode and teams (only the host can change the mode, only before the game starts). The lobby and snapshot messages carry each player's team and the team score.
 
 ## Code layout
 
@@ -151,5 +160,7 @@ Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed cont
 
 ### Tests (optional, need Chrome + puppeteer-core)
 
-`tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect).
+`tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
+- `node tests/stick-unit.js` and `node tests/teams-unit.js` are pure Node (no browser).
+- `tests/joystick-headless.js` and `tests/teams-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
 `TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).

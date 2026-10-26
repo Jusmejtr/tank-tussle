@@ -41,12 +41,13 @@ async function localTest(vp, label, shot) {
   // fire still works
   { const f = await p.$eval('.fire', e => { const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
     await touch(cdp, 'touchStart', [f]); await sleep(80); const k = await p.evaluate(() => window.__in); await touch(cdp, 'touchEnd', []); ok(!!k.f, 'FIRE button fires'); }
+  await p.evaluate(() => { const g = __tt.game; TT.newRound(g); g.crateTimer = 1e9; g.bullets.length = 0; }); // that shot may have hit the bot and ended the round: start clean
   if (shot) {
     const [cx, cy, R] = await stickCenter(p); await touch(cdp, 'touchStart', [[cx, cy]]); await touch(cdp, 'touchMove', [[cx, cy - R * 0.9]]); await sleep(700);
     await p.screenshot({ path: shot }); await touch(cdp, 'touchEnd', []); console.log('  screenshot', shot);
   }
   // rotate the phone while the finger is down (no touchend arrives) -> stick must not stay stuck
-  { const [cx, cy, R] = await stickCenter(p); await touch(cdp, 'touchStart', [[cx, cy]]); await touch(cdp, 'touchMove', [[cx + R * 0.9, cy]]); await sleep(200);
+  { const [cx, cy, R] = await stickCenter(p); await touch(cdp, 'touchStart', [[cx, cy]]); await touch(cdp, 'touchMove', [[cx + R * 0.9, cy]]); await sleep(400);
     await p.setViewport(vp.isLandscape ? PORT : LAND); await sleep(300);
     const k = await p.evaluate(() => window.__in); ok(!k.u && !k.l && !k.r, 'rotated mid-touch: stale touch cleared');
     await touch(cdp, 'touchCancel', []); await sleep(100);
