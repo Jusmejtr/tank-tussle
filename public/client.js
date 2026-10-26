@@ -1,0 +1,331 @@
+'use strict';
+(() => {
+const { C, COLORS } = TT;
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+
+// ---------- key sets ----------
+const LOCAL = [
+  { name: 'Red',    keys: { u: 'KeyE', l: 'KeyS', d: 'KeyD', r: 'KeyF', f: 'KeyQ' }, label: ['E', 'S', 'D', 'F', 'Q'] },
+  { name: 'Green',  keys: { u: 'ArrowUp', l: 'ArrowLeft', d: 'ArrowDown', r: 'ArrowRight', f: ['KeyM', 'Slash'] }, label: ['↑', '←', '↓', '→', 'M'] },
+  { name: 'Blue',   keys: { u: 'KeyI', l: 'KeyJ', d: 'KeyK', r: 'KeyL', f: 'KeyU' }, label: ['I', 'J', 'K', 'L', 'U'] },
+  { name: 'Yellow', keys: { u: 'Numpad8', l: 'Numpad4', d: 'Numpad5', r: 'Numpad6', f: 'Numpad0' }, label: ['Num8', 'Num4', 'Num5', 'Num6', 'Num0'] },
+];
+const ONLINE_KEYS = { u: ['ArrowUp', 'KeyW'], l: ['ArrowLeft', 'KeyA'], d: ['ArrowDown', 'KeyS'], r: ['ArrowRight', 'KeyD'], f: ['Space', 'KeyM', 'Enter'] };
+const GAME_CODES = new Set([...LOCAL.map(s => Object.values(s.keys)), ...Object.values(ONLINE_KEYS)].flat(2));
+
+const down = new Set(), tapped = new Set();
+addEventListener('keydown', e => {
+  if (e.code === 'Escape') { if (mode) togglePause(); return; }
+  if (!mode || inOverlay()) return;
+  if (GAME_CODES.has(e.code)) e.preventDefault();
+  down.add(e.code); tapped.add(e.code); audioInit();
+  if (mode === 'online' && net) onlineInput();
+});
+addEventListener('keyup', e => { down.delete(e.code); if (mode === 'online' && net) onlineInput(); });
+addEventListener('blur', () => down.clear());
+const pressed = c => Array.isArray(c) ? c.some(x => down.has(x) || tapped.has(x)) : (down.has(c) || tapped.has(c));
+const readKeys = ks => ({ u: pressed(ks.u), d: pressed(ks.d), l: pressed(ks.l), r: pressed(ks.r), f: pressed(ks.f) });
+const merge = (a, b) => ({ u: a.u || b.u, d: a.d || b.d, l: a.l || b.l, r: a.r || b.r, f: a.f || b.f });
+
+// ---------- menu ----------
+let nLocal = 2;
+function keysHtml(n) {
+  return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
+    + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '');
+}
+function refreshMenu() {
+  document.querySelectorAll('#nSel button[data-n]').forEach(b => b.classList.toggle('sel', +b.dataset.n === nLocal));
+  $('keysLocal').innerHTML = keysHtml(nLocal);
+  $('touchNote').textContent = isTouch ? 'On a phone/tablet: 2 players share the screen — Red uses the left stick + FIRE, Green the right.' : '';
+}
+document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
+refreshMenu();
+const qs = new URLSearchParams(location.search);
+$('name').value = localStorage.getItem('tt-name') || '';
+if (qs.get('room')) { $('code').value = qs.get('room').toUpperCase(); setTimeout(() => $('name').focus(), 50); }
+
+const inOverlay = () => !$('pause').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
+function show(id, on) { $(id).classList.toggle('hidden', !on); }
+let msgTimer;
+function flash(t, ms = 2500) { $('msg').textContent = t; show('msg', true); clearTimeout(msgTimer); msgTimer = setTimeout(() => show('msg', false), ms); }
+
+// ---------- state ----------
+let mode = null;           // 'local' | 'online'
+let game = null;           // local game
+let paused = false;
+let net = null;            // online state
+const particles = [];
+
+$('playLocal').onclick = () => startLocal(nLocal);
+$('create').onclick = () => connect({ t: 'create' });
+$('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
+$('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
+$('resume').onclick = () => togglePause(false);
+$('quit').onclick = () => quit();
+$('toLobby').onclick = () => { net && net.send({ t: 'stop' }); togglePause(false); };
+$('menuBtn').onclick = () => togglePause(true);
+$('leave').onclick = () => quit();
+$('copy').onclick = () => { const l = $('link'); l.select(); (navigator.clipboard ? navigator.clipboard.writeText(l.value) : Promise.reject()).then(() => flash('Link copied'), () => document.execCommand('copy')); };
+$('start').onclick = () => net && net.send({ t: 'start' });
+
+function togglePause(on) {
+  if (on === undefined) on = $('pause').classList.contains('hidden');
+  if (!$('lobby').classList.contains('hidden')) return;
+  paused = on && mode === 'local';
+  show('toLobbyRow', mode === 'online' && net && net.you === net.host);
+  show('pause', on);
+}
+function quit() {
+  if (net) { net.closed = true; try { net.ws.close(); } catch {} net = null; }
+  mode = null; game = null; paused = false; particles.length = 0;
+  ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
+  show('menu', true); refreshMenu();
+  history.replaceState(null, '', location.pathname);
+}
+
+// ---------- local game ----------
+function startLocal(n) {
+  audioInit();
+  mode = 'local'; game = TT.createGame(); paused = false;
+  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i });
+  TT.newRound(game); game.events.length = 0;
+  show('menu', false); show('menuBtn', true);
+  setupTouch(isTouch ? (n >= 2 ? 'local2' : null) : null);
+  flash(n === 2 ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
+}
+let acc = 0;
+function localTick(dt) {
+  if (paused) return;
+  acc = Math.min(acc + dt, 0.25);
+  while (acc >= 1 / 60) {
+    const inputs = {};
+    game.players.forEach((p, i) => { let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, touchIn[i]); inputs[p.id] = k; });
+    TT.step(game, inputs, 1 / 60); tapped.clear();
+    handleEvents(game.events.splice(0), id => game.tanks[id]);
+    acc -= 1 / 60;
+  }
+}
+
+// ---------- online ----------
+function connect(first) {
+  if (location.protocol === 'file:') return ($('err').textContent = 'Online needs the server (npm start).');
+  audioInit();
+  const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
+  $('err').textContent = 'Connecting…';
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  net = { ws, you: null, host: null, code: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false,
+    send: m => ws.readyState === 1 && ws.send(JSON.stringify(m)) };
+  const me = net;
+  ws.onopen = () => me.send(Object.assign({ name }, first));
+  ws.onerror = () => { $('err').textContent = 'Could not connect to the server.'; };
+  ws.onclose = () => { if (!me.closed && net === me) { quit(); $('err').textContent = 'Disconnected from the server.'; } };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.t === 'error') { $('err').textContent = m.msg; me.closed = true; ws.close(); if (net === me) net = null; return; }
+    if (m.t === 'joined') {
+      me.you = m.you; me.code = m.code; mode = 'online'; $('err').textContent = '';
+      history.replaceState(null, '', '?room=' + m.code);
+      show('menu', false); show('menuBtn', true); setupTouch(isTouch ? 'online' : null);
+    } else if (m.t === 'lobby') {
+      me.players = m.players; me.host = m.host; me.code = m.code;
+      if (me.started && !m.started) { me.maze = null; me.snaps = []; }
+      me.started = m.started; renderLobby();
+    } else if (m.t === 'maze') {
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = [];
+    } else if (m.t === 's') {
+      if (m.round !== me.round) return;
+      const now = performance.now(), est = m.time - now;
+      me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2] }])) };
+      me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
+      for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
+      if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
+    }
+  };
+}
+function renderLobby() {
+  if (!net) return;
+  $('roomCode').textContent = net.code;
+  $('link').value = location.origin + location.pathname + '?room=' + net.code;
+  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}</li>`).join('')
+    + (net.players.length < 2 ? '<li class="muted">Share the code or link — waiting for players (2–4)…</li>' : '');
+  const host = net.you === net.host;
+  show('start', host); show('waitHost', !host);
+  $('start').disabled = net.players.length < 1;
+  show('lobby', !net.started);
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function onlineInput() {
+  let k = inOverlay() ? { u: 0, d: 0, l: 0, r: 0, f: 0 } : readKeys(ONLINE_KEYS);
+  if (touchIn[0]) k = merge(k, touchIn[0]);
+  const s = JSON.stringify(k), now = performance.now();
+  tapped.clear();
+  if (s !== net.lastSent || now - net.lastSentAt > 250) { net.send({ t: 'input', k }); net.lastSent = s; net.lastSentAt = now; }
+}
+const INTERP_DELAY = 90;
+function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
+function onlineView() {
+  if (!net.maze || !net.snaps.length) return null;
+  const rt = performance.now() + net.offset - INTERP_DELAY, S = net.snaps;
+  let a = S[0], b = S[0];
+  if (rt >= S[S.length - 1].time) a = b = S[S.length - 1];
+  else for (let i = 0; i < S.length - 1; i++) if (S[i].time <= rt && S[i + 1].time >= rt) { a = S[i]; b = S[i + 1]; break; }
+  const t = b.time > a.time ? Math.min(1, Math.max(0, (rt - a.time) / (b.time - a.time))) : 1;
+  const tanks = [];
+  for (const [id, tb] of b.tanks) {
+    const ta = a.tanks.get(id) || tb;
+    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive) });
+  }
+  const bullets = [];
+  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t }); else if (t > 0.5) bullets.push(bb); }
+  const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
+  handleEvents(due, id => tanks.find(x => x.id === id));
+  return { maze: net.maze, tanks, bullets, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
+}
+
+// ---------- effects & sound ----------
+let actx = null;
+function audioInit() { if (actx) { actx.state === 'suspended' && actx.resume(); return; } try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+function beep(freq, dur, type = 'square', vol = 0.05, slide = 0) {
+  if (!actx) return; const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+  o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+}
+function boom() {
+  if (!actx) return; const len = actx.sampleRate * 0.5, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+  const s = actx.createBufferSource(), g = actx.createGain(); g.gain.value = 0.25; s.buffer = buf; s.connect(g).connect(actx.destination); s.start();
+}
+function handleEvents(evs, tankOf) {
+  for (const e of evs) {
+    if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
+    else if (e.type === 'die') {
+      boom();
+      const p = (mode === 'local' ? game.players : net.players).find(p => p.id === e.id);
+      const col = p ? COLORS[p.color] : '#888';
+      for (let i = 0; i < 34; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 120; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.6, max: 1.1, col: i % 3 ? col : (i % 2 ? '#555' : '#f7b733'), r: 1.5 + Math.random() * 3 }); }
+    }
+  }
+}
+
+// ---------- touch controls ----------
+const touchIn = [null, null];
+function joystick(idx) {
+  const el = document.createElement('div'); el.className = 'joy'; el.innerHTML = '<div class="knob"></div>';
+  const knob = el.firstChild; let pid = null;
+  const upd = e => {
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2;
+    let dx = (e.clientX - cx) / R, dy = (e.clientY - cy) / R; const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
+    knob.style.transform = `translate(${dx * R * 0.6}px,${dy * R * 0.6}px)`;
+    const s = touchIn[idx]; s.u = dy < -0.35; s.d = dy > 0.35; s.l = dx < -0.35; s.r = dx > 0.35;
+  };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; el.setPointerCapture(pid); upd(e); });
+  el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
+  const end = e => { if (e.pointerId !== pid) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; s.u = s.d = s.l = s.r = false; };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  return el;
+}
+function fireBtn(idx, color) {
+  const el = document.createElement('div'); el.className = 'fire'; el.textContent = 'FIRE'; el.style.background = color;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); el.setPointerCapture(e.pointerId); touchIn[idx].f = true; el.classList.add('on'); });
+  const end = () => { touchIn[idx].f = false; el.classList.remove('on'); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  return el;
+}
+let padMode = null;
+function setupTouch(m) {
+  padMode = m; const L = $('padL'), R = $('padR'); L.innerHTML = R.innerHTML = ''; touchIn[0] = touchIn[1] = null;
+  if (!m) { show('padL', false); show('padR', false); return; }
+  touchIn[0] = { u: false, d: false, l: false, r: false, f: false };
+  if (m === 'local2') {
+    touchIn[1] = { u: false, d: false, l: false, r: false, f: false };
+    L.append(fireBtn(0, COLORS[0]), joystick(0)); R.append(fireBtn(1, COLORS[1]), joystick(1));
+  } else { // online: stick left, fire right
+    const me = () => (net && net.players.find(p => p.id === net.you)) || { color: 0 };
+    L.append(joystick(0)); const f = fireBtn(0, COLORS[me().color]); R.append(f); setTimeout(() => (f.style.background = COLORS[me().color]), 1500);
+  }
+  show('padL', true); show('padR', true);
+}
+
+// ---------- rendering ----------
+function layout(maze) {
+  const W = innerWidth, H = innerHeight;
+  const side = padMode ? Math.min(180, Math.max(120, W * 0.19)) : 10;
+  const hud = Math.max(44, Math.min(70, H * 0.12));
+  const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
+  const s = Math.min((W - side * 2) / mw, (H - hud - 16) / mh);
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - maze.rows * C.CELL * s) / 2), hud, side };
+}
+function drawTank(x, y, a, color, s = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.scale(s, s);
+  ctx.fillStyle = '#3b3b3b'; ctx.fillRect(-13, -12, 25, 6); ctx.fillRect(-13, 6, 25, 6);           // treads
+  ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.rect(-11, -8, 21, 16); ctx.fill(); ctx.stroke();                              // hull
+  ctx.fillStyle = '#333'; ctx.fillRect(1, -2, 15, 4);                                                // barrel
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(-1, 0, 6, 0, 6.283); ctx.fill(); ctx.stroke();      // turret
+  ctx.restore();
+}
+function render(view, dt) {
+  const dpr = devicePixelRatio || 1;
+  if (cv.width !== Math.round(innerWidth * dpr) || cv.height !== Math.round(innerHeight * dpr)) { cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr); cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
+  if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
+  const m = view.maze, L = layout(m), CS = C.CELL;
+  ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
+  // floor + faint cell grid
+  ctx.fillStyle = '#ececec'; ctx.fillRect(0, 0, m.cols * CS, m.rows * CS);
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let c = 1; c < m.cols; c++) { ctx.moveTo(c * CS, 0); ctx.lineTo(c * CS, m.rows * CS); }
+  for (let r = 1; r < m.rows; r++) { ctx.moveTo(0, r * CS); ctx.lineTo(m.cols * CS, r * CS); }
+  ctx.stroke();
+  // walls
+  ctx.fillStyle = '#4d4d4d';
+  for (const q of (view.rects || TT.mazeRects(m))) ctx.fillRect(q.x, q.y, q.w, q.h);
+  // tanks
+  for (const t of view.tanks) if (t.alive) { const p = view.players.find(p => p.id === t.id); drawTank(t.x, t.y, t.a, COLORS[p ? p.color : 0]); }
+  // bullets
+  ctx.fillStyle = '#222';
+  for (const b of view.bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, C.BULLET_R, 0, 6.283); ctx.fill(); }
+  // particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]; p.life -= dt; if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.93; p.vy *= 0.93;
+    ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+  }
+  ctx.globalAlpha = 1; ctx.restore();
+  // HUD: scores at the bottom
+  const ps = view.players, n = ps.length, hy = innerHeight - L.hud / 2 - 4;
+  const slot = Math.min(200, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
+  ctx.textBaseline = 'middle';
+  ps.forEach((p, i) => {
+    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot, sc = Math.min(1.3, L.hud / 50);
+    drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc);
+    ctx.fillStyle = '#333'; ctx.textAlign = 'left';
+    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
+    ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
+    const sub = view.legend ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
+    ctx.fillText(sub, cx - 6 * sc, hy + 13 * sc);
+  });
+}
+function localView() {
+  return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
+    legend: game.players.map((p, i) => `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  let view = null;
+  if (mode === 'local' && game) { localTick(dt); view = localView(); }
+  else if (mode === 'online' && net) { onlineInput(); view = onlineView(); if (view) view.rects = net.rects; }
+  render(view, dt);
+  show('rotate', !!mode && isTouch && innerHeight > innerWidth);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down };
+})();
