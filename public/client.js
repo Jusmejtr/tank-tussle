@@ -80,6 +80,10 @@ $('menuBtn').onclick = () => togglePause(true);
 $('leave').onclick = () => quit();
 $('copy').onclick = () => { const l = $('link'); l.select(); (navigator.clipboard ? navigator.clipboard.writeText(l.value) : Promise.reject()).then(() => flash('Link copied'), () => document.execCommand('copy')); };
 $('start').onclick = () => net && net.send({ t: 'start' });
+$('lbPlus').onclick = () => net && net.send({ t: 'addBot' });
+$('lbMinus').onclick = () => net && net.send({ t: 'removeBot' });
+document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
+if ($('server')) { $('server').value = new URLSearchParams(location.search).get('server') || window.TT_SERVER_URL || (/^https?:$/.test(location.protocol) && !window.TT_STATIC ? '' : localStorage.getItem('tt-server') || ''); }
 
 function togglePause(on) {
   if (on === undefined) on = $('pause').classList.contains('hidden');
@@ -88,8 +92,8 @@ function togglePause(on) {
   show('toLobbyRow', mode === 'online' && net && net.you === net.host);
   show('pause', on);
 }
-function quit() {
-  if (net) { net.closed = true; try { net.ws.close(); } catch {} net = null; }
+function quit(keepErr) {
+  if (net) { net.closed = true; try { net.send({ t: 'leave' }); net.ws.close(); } catch {} net = null; }
   mode = null; game = null; paused = false; particles.length = 0;
   ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
   show('menu', true); refreshMenu();
@@ -128,27 +132,60 @@ function localTick(dt) {
 }
 
 // ---------- online ----------
+// Server URL: ?server=... > window.TT_SERVER_URL (config.js) > same origin (when served by server.js) > last used
+function serverBase() {
+  const q = new URLSearchParams(location.search).get('server') || ($('server') && $('server').value.trim());
+  let s = q || window.TT_SERVER_URL || '';
+  if (!s && /^https?:$/.test(location.protocol) && !window.TT_STATIC) s = location.origin;
+  if (!s) s = localStorage.getItem('tt-server') || '';
+  if (s && !/^(https?|wss?):\/\//.test(s)) s = 'https://' + s;
+  return s.replace(/\/+$/, '');
+}
+const wsUrlOf = base => (/^wss?:/.test(base) ? base : base.replace(/^http/, 'ws')).replace(/\/ws$/, '') + '/ws';
+function shareLink(code) {
+  const base = serverBase(), sameOrigin = /^https?:$/.test(location.protocol) && base === location.origin;
+  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname + '?room=' + code + (sameOrigin || base === (window.TT_SERVER_URL || '').replace(/\/+$/, '') ? '' : '&server=' + encodeURIComponent(base));
+  return base.replace(/^ws/, 'http') + '/?room=' + code; // standalone file: link to the client the server hosts
+}
 function connect(first) {
-  if (location.protocol === 'file:') return ($('err').textContent = 'Online needs the server (npm start).');
+  const base = serverBase();
+  if (!base) return ($('err').textContent = 'No game server set. Run "npm start" and open http://localhost:8090, or enter a server URL above.');
   audioInit();
   const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
   $('err').textContent = 'Connecting…';
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-  net = { ws, you: null, host: null, code: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false,
-    send: m => ws.readyState === 1 && ws.send(JSON.stringify(m)) };
-  const me = net;
-  ws.onopen = () => me.send(Object.assign({ name }, first));
-  ws.onerror = () => { $('err').textContent = 'Could not connect to the server.'; };
-  ws.onclose = () => { if (!me.closed && net === me) { quit(); $('err').textContent = 'Disconnected from the server.'; } };
+  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null,
+    send(m) { this.ws && this.ws.readyState === 1 && this.ws.send(JSON.stringify(m)); } };
+  openSocket(net, Object.assign({ name }, first));
+}
+function openSocket(me, firstMsg) {
+  let ws;
+  try { ws = new WebSocket(wsUrlOf(me.base)); } catch (e) { $('err').textContent = 'Bad server URL.'; return; }
+  me.ws = ws;
+  ws.onopen = () => { me.retries = 0; ws.send(JSON.stringify(firstMsg)); };
+  ws.onerror = () => { if (!me.code) $('err').textContent = 'Could not connect to the server (' + me.base + '). Free servers can take ~1 min to wake up — try again.'; };
+  ws.onclose = () => {
+    if (me.closed || net !== me || me.ws !== ws) return;
+    if (me.token && me.retries < 12) { // try to get our slot back
+      me.retries++; flash('Connection lost — reconnecting… (' + me.retries + ')', 2000);
+      setTimeout(() => { if (net === me && !me.closed) openSocket(me, { t: 'rejoin', code: me.code, token: me.token }); }, 1200);
+      return;
+    }
+    quit(); $('err').textContent = 'Disconnected from the server.';
+  };
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.t === 'error') { $('err').textContent = m.msg; me.closed = true; ws.close(); if (net === me) net = null; return; }
+    if (m.t === 'error') {
+      if (m.soft) { flash(m.msg); return; }
+      $('err').textContent = m.msg; me.closed = true; ws.close(); if (net === me) quit(true); $('err').textContent = m.msg; return;
+    }
     if (m.t === 'joined') {
-      me.you = m.you; me.code = m.code; mode = 'online'; $('err').textContent = '';
-      history.replaceState(null, '', '?room=' + m.code);
-      show('menu', false); show('menuBtn', true); setupTouch(isTouch ? 'online' : null);
+      const re = !!me.token;
+      me.you = m.you; me.code = m.code; me.token = m.token; mode = 'online'; $('err').textContent = '';
+      localStorage.setItem('tt-server', me.base);
+      history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
+      show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
     } else if (m.t === 'lobby') {
-      me.players = m.players; me.host = m.host; me.code = m.code;
+      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level;
       if (me.started && !m.started) { me.maze = null; me.snaps = []; }
       me.started = m.started; renderLobby();
     } else if (m.t === 'maze') {
@@ -168,11 +205,13 @@ function connect(first) {
 function renderLobby() {
   if (!net) return;
   $('roomCode').textContent = net.code;
-  $('link').value = location.origin + location.pathname + '?room=' + net.code;
-  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}</li>`).join('')
-    + (net.players.length < 2 ? '<li class="muted">Share the code or link — waiting for players (2–4)…</li>' : '');
+  $('link').value = shareLink(net.code);
+  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
+    + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
   const host = net.you === net.host;
-  show('start', host); show('waitHost', !host);
+  show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
+  $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
+  document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
   $('start').disabled = net.players.length < 1;
   show('lobby', !net.started);
 }

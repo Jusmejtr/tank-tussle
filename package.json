@@ -1,10 +1,18 @@
 {
   "name": "tank-tussle",
   "version": "1.0.0",
-  "description": "Tank Trouble-style remake: local 2-4 players on one keyboard + online rooms",
+  "description": "Tank Trouble-style remake: local 2-8 tanks (humans + bots) and online rooms",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "ws": "^8.18.0" },
+  "scripts": {
+    "start": "node server.js",
+    "build": "python3 build.py"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {},
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
 }

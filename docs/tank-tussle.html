@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:,">
+<meta name="theme-color" content="#cfcfcf">
+<title>Tank Tussle — a Tank Trouble-style remake</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #cfcfcf; font-family: Verdana, Geneva, Tahoma, sans-serif; color: #333; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+  canvas#c { position: fixed; inset: 0; display: block; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(207,207,207,.92); z-index: 10; overflow: auto; touch-action: auto; padding: 12px; }
+  .hidden { display: none !important; }
+  .panel { background: #f4f4f4; border: 3px solid #555; border-radius: 6px; padding: 18px 22px; max-width: 760px; width: 100%; box-shadow: 0 6px 0 #999; }
+  h1 { margin: 0; font-size: 40px; letter-spacing: 3px; text-align: center; color: #444; text-shadow: 2px 2px 0 #bbb; }
+  .sub { text-align: center; color: #777; font-size: 12px; margin: 2px 0 14px; }
+  .cols { display: flex; gap: 18px; flex-wrap: wrap; }
+  .col { flex: 1 1 300px; background: #e6e6e6; border: 2px solid #aaa; border-radius: 5px; padding: 12px; }
+  h2 { margin: 0 0 10px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
+  button { font: inherit; font-weight: bold; border: 2px solid #444; background: #fff; border-radius: 4px; padding: 8px 14px; cursor: pointer; box-shadow: 0 3px 0 #777; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #777; }
+  button.go { background: #4c4c4c; color: #fff; }
+  button.sel { background: #4c4c4c; color: #fff; }
+  .seg button { min-width: 44px; }
+  input { font: inherit; padding: 7px 8px; border: 2px solid #888; border-radius: 4px; width: 100%; background: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .keys { font-size: 12px; line-height: 1.7; margin-top: 10px; }
+  .keys .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(0,0,0,.4); }
+  kbd { background: #fff; border: 1px solid #999; border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; font-size: 11px; font-family: inherit; }
+  .muted { color: #777; font-size: 12px; }
+  .err { color: #c22; font-size: 13px; min-height: 16px; }
+  #roomCode { font-size: 44px; letter-spacing: 8px; text-align: center; font-weight: bold; margin: 4px 0; }
+  #plist { list-style: none; padding: 0; margin: 10px 0; }
+  #plist li { padding: 6px 8px; background: #fff; border: 1px solid #bbb; margin: 4px 0; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
+  #menuBtn { position: fixed; top: 8px; left: 8px; z-index: 5; padding: 4px 10px; font-size: 18px; opacity: .8; }
+  #msg { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; background: rgba(60,60,60,.85); color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 14px; pointer-events: none; }
+  /* touch controls */
+  .pad { position: fixed; top: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; justify-content: space-around; align-items: center; padding: 10px 0; touch-action: none; }
+  .pad.left { left: 0; } .pad.right { right: 0; }
+  .joy { width: 128px; height: 128px; border-radius: 50%; background: rgba(80,80,80,.18); border: 3px solid rgba(80,80,80,.45); position: relative; touch-action: none; }
+  .joy .knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(70,70,70,.55); }
+  .fire { width: 92px; height: 92px; border-radius: 50%; border: 3px solid rgba(0,0,0,.45); color: #fff; font-weight: bold; font-size: 16px; display: flex; align-items: center; justify-content: center; touch-action: none; opacity: .85; }
+  .fire.on { transform: scale(.92); opacity: 1; }
+  #rotate { position: fixed; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; text-align: center; background: rgba(207,207,207,.95); font-size: 18px; padding: 30px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="menuBtn" class="hidden" title="Menu (Esc)">☰</button>
+<div id="msg" class="hidden"></div>
+<div id="padL" class="pad left hidden"></div>
+<div id="padR" class="pad right hidden"></div>
+<div id="rotate" class="hidden">↻ Turn your phone sideways (landscape) to play</div>
+
+<div id="menu" class="overlay">
+  <div class="panel">
+    <h1>TANK TUSSLE</h1>
+    <div class="sub">a fan remake in the spirit of the classic 2015 Tank Trouble · simple mazes, slow bouncing bullets, one hit and you're out</div>
+    <div class="cols">
+      <div class="col">
+        <h2>Same keyboard</h2>
+        <div class="row seg" id="nSel"><span style="width:64px">Players:</span>
+          <button data-n="0">0</button><button data-n="1">1</button><button data-n="2" class="sel">2</button><button data-n="3">3</button><button data-n="4">4</button>
+        </div>
+        <div class="row seg"><span style="width:64px">Bots:</span>
+          <button id="botMinus">−</button><b id="botN" style="min-width:22px;text-align:center">0</b><button id="botPlus">+</button>
+          <span class="muted">(max 8 tanks)</span>
+        </div>
+        <div class="row seg" id="lvlSel"><span style="width:64px">Bot skill:</span>
+          <button data-l="easy">Easy</button><button data-l="normal" class="sel">Normal</button><button data-l="hard">Hard</button>
+        </div>
+        <div class="row"><button class="go" id="playLocal" style="flex:1">Play ▶</button></div>
+        <div class="keys" id="keysLocal"></div>
+        <div class="muted" id="touchNote" style="margin-top:6px"></div>
+      </div>
+      <div class="col">
+        <h2>Online (own PC/phone each)</h2>
+        <div class="row"><input id="name" maxlength="14" placeholder="Your name"></div>
+        <div class="row"><input id="server" placeholder="Server URL (blank = this site)" style="font-size:12px"></div>
+        <div class="row"><button class="go" id="create" style="flex:1">Create room</button></div>
+        <div class="row"><input id="code" maxlength="4" placeholder="CODE" style="text-transform:uppercase;width:110px"><button id="join" style="flex:1">Join room</button></div>
+        <div class="err" id="err"></div>
+        <div class="keys">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:12px;text-align:center">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling, Laser, Frag bomb (fire again to burst), Death ray, Homing missile, Mines. Last tank standing scores a point. <kbd>Esc</kbd> = menu</div>
+  </div>
+</div>
+
+<div id="lobby" class="overlay hidden">
+  <div class="panel" style="max-width:440px">
+    <h2 style="text-align:center">Room code</h2>
+    <div id="roomCode">----</div>
+    <div class="row"><input id="link" readonly><button id="copy" style="white-space:nowrap">Copy link</button></div>
+    <ul id="plist"></ul>
+    <div class="row seg hidden" id="botRow"><span style="width:70px">Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted">(max 8 tanks)</span></div>
+    <div class="row seg hidden" id="lvlRow"><span style="width:70px">Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
+    <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
+    <div class="row"><button id="leave">Leave room</button></div>
+    <div class="muted">Controls: arrows + Space/M · on phone: on-screen stick + FIRE</div>
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden">
+  <div class="panel" style="max-width:320px;text-align:center">
+    <h2>Menu</h2>
+    <div class="row"><button class="go" id="resume" style="flex:1">Resume</button></div>
+    <div class="row hidden" id="toLobbyRow"><button id="toLobby" style="flex:1">End game → lobby (host)</button></div>
+    <div class="row"><button id="quit" style="flex:1">Quit to title</button></div>
+  </div>
+</div>
+
+<script>
+// Online server for this copy of the client.
+// Leave empty when the page is served by server.js itself (same origin).
+// For the static GitHub Pages copy set it to your deployed server, e.g. 'https://tank-tussle.onrender.com'.
+// Players can also override it with ?server=https://... in the URL.
+window.TT_SERVER_URL = window.TT_SERVER_URL || '';
+
+</script>
+<script>
+// Shared game logic for Tank Tussle (runs in the browser for local play and in Node on the server).
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.TT = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+  const C = {
+    CELL: 64, WALL: 4, TANK_R: 13, BULLET_R: 3.2,
+    BULLET_SPEED: 150, BULLET_LIFE: 10, MAX_BULLETS: 5,
+    TANK_SPEED: 105, TANK_ROT: 3.4, ROUND_END_DELAY: 3,
+    OWNER_GRACE: 0.05,
+  };
+  const COLORS = ['#d8342c', '#3fa33a', '#2f6fd6', '#e0a800', '#f07a1a', '#8e44ad', '#17a2b8', '#e75480'];
+  const COLOR_NAMES = ['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'Purple', 'Cyan', 'Pink'];
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randi = (a, b) => Math.floor(rand(a, b + 1));
+
+  // ---------- Maze ----------
+  // hw[r][c] = wall on the top edge of cell (c,r), r in 0..rows ; vw[r][c] = wall on the left edge, c in 0..cols
+  function genMaze(cols, rows) {
+    const hw = [], vw = [];
+    for (let r = 0; r <= rows; r++) hw.push(new Array(cols).fill(1));
+    for (let r = 0; r < rows; r++) vw.push(new Array(cols + 1).fill(1));
+    const seen = rows && Array.from({ length: rows }, () => new Array(cols).fill(false));
+    const stack = [[randi(0, cols - 1), randi(0, rows - 1)]];
+    seen[stack[0][1]][stack[0][0]] = true;
+    while (stack.length) {
+      const [c, r] = stack[stack.length - 1];
+      const nb = [];
+      if (c > 0 && !seen[r][c - 1]) nb.push([c - 1, r, 'L']);
+      if (c < cols - 1 && !seen[r][c + 1]) nb.push([c + 1, r, 'R']);
+      if (r > 0 && !seen[r - 1][c]) nb.push([c, r - 1, 'U']);
+      if (r < rows - 1 && !seen[r + 1][c]) nb.push([c, r + 1, 'D']);
+      if (!nb.length) { stack.pop(); continue; }
+      const [nc, nr, d] = nb[randi(0, nb.length - 1)];
+      if (d === 'L') vw[r][c] = 0; else if (d === 'R') vw[r][c + 1] = 0;
+      else if (d === 'U') hw[r][c] = 0; else hw[r + 1][c] = 0;
+      seen[nr][nc] = true; stack.push([nc, nr]);
+    }
+    // Knock out only a small fraction (~6-12%) of the remaining interior walls for a few loops.
+    // Starting from a perfect (fully connected) maze, removing walls can never isolate a cell.
+    const interior = [];
+    for (let r = 1; r < rows; r++) for (let c = 0; c < cols; c++) if (hw[r][c]) interior.push(['h', r, c]);
+    for (let r = 0; r < rows; r++) for (let c = 1; c < cols; c++) if (vw[r][c]) interior.push(['v', r, c]);
+    const extra = Math.round(interior.length * rand(0.06, 0.12));
+    for (let i = 0; i < extra && interior.length; i++) {
+      const [k, r, c] = interior.splice(randi(0, interior.length - 1), 1)[0];
+      if (k === 'h') hw[r][c] = 0; else vw[r][c] = 0;
+    }
+    return { cols, rows, hw, vw };
+  }
+
+  // Merge wall edges into axis-aligned rectangles {x,y,w,h}
+  function mazeRects(m) {
+    const { CELL, WALL } = C, h = WALL / 2, rects = [];
+    for (let r = 0; r <= m.rows; r++) {
+      let c = 0;
+      while (c < m.cols) {
+        if (!m.hw[r][c]) { c++; continue; }
+        let e = c; while (e < m.cols && m.hw[r][e]) e++;
+        rects.push({ x: c * CELL - h, y: r * CELL - h, w: (e - c) * CELL + WALL, h: WALL });
+        c = e;
+      }
+    }
+    for (let c = 0; c <= m.cols; c++) {
+      let r = 0;
+      while (r < m.rows) {
+        if (!m.vw[r][c]) { r++; continue; }
+        let e = r; while (e < m.rows && m.vw[e][c]) e++;
+        rects.push({ x: c * CELL - h, y: r * CELL - h, w: WALL, h: (e - r) * CELL + WALL });
+        r = e;
+      }
+    }
+    return rects;
+  }
+
+  // ---------- Collision helpers ----------
+  function circleHitsRect(x, y, r, q) {
+    const nx = Math.max(q.x, Math.min(x, q.x + q.w)), ny = Math.max(q.y, Math.min(y, q.y + q.h));
+    const dx = x - nx, dy = y - ny;
+    return dx * dx + dy * dy < r * r;
+  }
+  function pushCircleOut(o, r, rects) {
+    for (let it = 0; it < 4; it++) {
+      let moved = false;
+      for (const q of rects) {
+        const nx = Math.max(q.x, Math.min(o.x, q.x + q.w)), ny = Math.max(q.y, Math.min(o.y, q.y + q.h));
+        let dx = o.x - nx, dy = o.y - ny; const d2 = dx * dx + dy * dy;
+        if (d2 >= r * r) continue;
+        if (d2 > 1e-9) { const d = Math.sqrt(d2), p = r - d; o.x += dx / d * p; o.y += dy / d * p; }
+        else { // centre inside rect: push along smallest axis
+          const l = o.x - q.x, rr = q.x + q.w - o.x, t = o.y - q.y, b = q.y + q.h - o.y, mn = Math.min(l, rr, t, b);
+          if (mn === l) o.x = q.x - r; else if (mn === rr) o.x = q.x + q.w + r; else if (mn === t) o.y = q.y - r; else o.y = q.y + q.h + r;
+        }
+        moved = true;
+      }
+      if (!moved) break;
+    }
+  }
+
+  // ---------- Weapons ----------
+  const WEAPONS = ['gatling', 'laser', 'frag', 'deathray', 'missile', 'mine'];
+  const WEAPON_NAMES = { gatling: 'Gatling', laser: 'Laser', frag: 'Frag bomb', deathray: 'Death ray', missile: 'Homing missile', mine: 'Mines' };
+  const W = {
+    CRATE_MIN: 8, CRATE_MAX: 12, CRATE_FIRST_MIN: 3, CRATE_FIRST_MAX: 6, MAX_CRATES: 3, CRATE_R: 10,
+    GATLING_AMMO: 24, GATLING_RATE: 0.07, GATLING_SPEED: 200, GATLING_LIFE: 3.5,
+    LASER_LEN: 1100, LASER_GUIDE: 240,
+    FRAG_SPEED: 120, FRAG_FUSE: 3, FRAG_PIECES: 26, FRAG_PIECE_SPEED: 210,
+    RAY_CHARGE: 1.0, RAY_LEN: 2200,
+    MISSILE_SPEED: 125, MISSILE_TURN: 3.0, MISSILE_LIFE: 9, MISSILE_SEEK_AFTER: 0.6,
+    MINE_AMMO: 3, MINE_ARM: 1.5, MINE_TRIGGER: 17, MINE_BLAST: 34,
+  };
+  const KIND_R = { b: C.BULLET_R, g: 2.2, frag: 2, bomb: 5, missile: 4 };
+
+  // March a ray through the maze with the same bounce rules as bullets. Returns bounce points + dense samples.
+  function traceRay(rects, x, y, a, len, stepLen = 2) {
+    const o = { x, y, vx: Math.cos(a), vy: Math.sin(a) }, pts = [[x, y, 0]], samples = [];
+    for (let d = 0; d < len; d += stepLen) {
+      let bounced = false;
+      o.x += o.vx * stepLen;
+      if (rects.some(q => circleHitsRect(o.x, o.y, 1, q))) { o.x -= o.vx * stepLen; o.vx = -o.vx; bounced = true; }
+      o.y += o.vy * stepLen;
+      if (rects.some(q => circleHitsRect(o.x, o.y, 1, q))) { o.y -= o.vy * stepLen; o.vy = -o.vy; bounced = true; }
+      if (bounced) pts.push([o.x, o.y, d]);
+      samples.push([o.x, o.y, d]);
+    }
+    pts.push([o.x, o.y, len]);
+    return { pts, samples };
+  }
+
+  // ---------- Game ----------
+  function createGame() {
+    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [] };
+  }
+  function addPlayer(g, p) {
+    const used = new Set(g.players.map(q => q.color));
+    let ci = p.colorIndex;
+    if (ci == null || used.has(ci)) { ci = 0; while (used.has(ci)) ci++; }
+    const pl = { id: p.id, name: p.name || COLOR_NAMES[ci], color: ci, score: 0 };
+    g.players.push(pl);
+    return pl;
+  }
+  function removePlayer(g, id) {
+    g.players = g.players.filter(p => p.id !== id);
+    delete g.tanks[id];
+  }
+  function mazeSizeFor(n) {
+    if (n <= 2) return [randi(5, 8), randi(4, 6)];
+    if (n === 3) return [randi(7, 9), randi(5, 7)];
+    if (n === 4) return [randi(8, 10), randi(6, 7)];
+    if (n <= 6) return [randi(10, 12), randi(7, 8)];
+    return [randi(12, 13), randi(8, 9)];
+  }
+  function newRound(g) {
+    const n = Math.max(1, g.players.length);
+    const [cols, rows] = mazeSizeFor(n);
+    g.maze = genMaze(cols, rows);
+    g.rects = mazeRects(g.maze);
+    g.bullets = []; g.crates = []; g.mines = []; g.beams = []; g.tanks = {}; g.round++; g.phase = 'play'; g.endTimer = 0;
+    g.crateTimer = rand(W.CRATE_FIRST_MIN, W.CRATE_FIRST_MAX);
+    const chosen = [];
+    for (const p of g.players) {
+      let best = null, bestD = -1;
+      for (let k = 0; k < 40; k++) {
+        const c = randi(0, cols - 1), r = randi(0, rows - 1);
+        if (chosen.some(q => q[0] === c && q[1] === r)) continue;
+        const d = chosen.length ? Math.min(...chosen.map(q => Math.abs(q[0] - c) + Math.abs(q[1] - r))) + Math.random() * 0.5 : Math.random();
+        if (d > bestD) { bestD = d; best = [c, r]; }
+      }
+      if (!best) best = [0, 0];
+      chosen.push(best);
+      g.tanks[p.id] = {
+        id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
+        a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
+        weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0,
+      };
+    }
+    g.events.push({ type: 'round', round: g.round });
+  }
+
+  function spawnCrate(g, type, x, y) {
+    if (x == null) {
+      const { cols, rows } = g.maze;
+      for (let k = 0; k < 30; k++) {
+        const cx = (randi(0, cols - 1) + 0.5) * C.CELL, cy = (randi(0, rows - 1) + 0.5) * C.CELL;
+        const busy = Object.values(g.tanks).some(t => t.alive && Math.hypot(t.x - cx, t.y - cy) < 48) || g.crates.some(c => c.x === cx && c.y === cy);
+        if (!busy) { x = cx; y = cy; break; }
+      }
+      if (x == null) return null;
+    }
+    const c = { id: g.nextId++, x, y, type: type || WEAPONS[randi(0, WEAPONS.length - 1)] };
+    g.crates.push(c);
+    return c;
+  }
+  function giveWeapon(t, type) {
+    t.weapon = type; t.cool = 0; t.charge = 0; t.bombId = 0;
+    t.ammo = type === 'gatling' ? W.GATLING_AMMO : type === 'mine' ? W.MINE_AMMO : 1;
+  }
+
+  function moveBullet(b, dist, rects) {
+    const r = b.r || C.BULLET_R;
+    const steps = Math.max(1, Math.ceil(dist / 1.5)), sp = Math.hypot(b.vx, b.vy) || 1, f = dist / sp / steps;
+    let bounced = false;
+    for (let s = 0; s < steps; s++) {
+      b.x += b.vx * f;
+      if (rects.some(q => circleHitsRect(b.x, b.y, r, q))) { b.x -= b.vx * f; b.vx = -b.vx; bounced = true; }
+      b.y += b.vy * f;
+      if (rects.some(q => circleHitsRect(b.x, b.y, r, q))) { b.y -= b.vy * f; b.vy = -b.vy; bounced = true; }
+    }
+    return bounced;
+  }
+
+  function kill(g, t, by, cause) {
+    if (!t.alive) return;
+    t.alive = false;
+    g.events.push({ type: 'die', id: t.id, x: t.x, y: t.y, by, cause });
+  }
+  function spawnProjectile(g, t, kind, speed, extra) {
+    const a = t.a + (extra && extra.spread ? rand(-extra.spread, extra.spread) : 0);
+    const b = Object.assign({ id: g.nextId++, owner: t.id, kind, r: KIND_R[kind], x: t.x, y: t.y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, age: 0, a }, extra || {});
+    moveBullet(b, C.TANK_R + b.r + 3, g.rects); // emerge from the barrel (may bounce straight back — like the original)
+    g.bullets.push(b);
+    return b;
+  }
+  function burstFrag(g, b) {
+    for (let i = 0; i < W.FRAG_PIECES; i++) {
+      const a = Math.random() * Math.PI * 2, s = W.FRAG_PIECE_SPEED * rand(0.6, 1.1);
+      g.bullets.push({ id: g.nextId++, owner: b.owner, kind: 'frag', r: KIND_R.frag, x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0, life: rand(0.5, 1.0), grace: 0 });
+    }
+    g.events.push({ type: 'burst', x: b.x, y: b.y });
+  }
+  function fireBeam(g, t, kind) {
+    const len = kind === 'laser' ? W.LASER_LEN : W.RAY_LEN;
+    const ray = traceRay(g.rects, t.x + Math.cos(t.a) * 8, t.y + Math.sin(t.a) * 8, t.a, len);
+    let cut = ray.pts;
+    for (const [x, y, d] of ray.samples) {
+      let hitAny = false;
+      for (const o of Object.values(g.tanks)) {
+        if (!o.alive) continue;
+        if (o.id === t.id && (kind === 'deathray' || d < 30)) continue; // death ray never hits its owner
+        if (Math.hypot(o.x - x, o.y - y) < C.TANK_R) { kill(g, o, t.id, kind); hitAny = true; }
+      }
+      if (hitAny && kind === 'laser') { // laser stops at first victim
+        cut = ray.pts.filter(p => p[2] < d); cut.push([x, y]); break;
+      }
+    }
+    g.beams.push({ id: g.nextId++, kind, owner: t.id, pts: cut, life: kind === 'laser' ? 0.35 : 0.7 });
+    g.events.push({ type: kind, id: t.id });
+  }
+
+  function useWeapon(g, t, k, pressed) {
+    switch (t.weapon) {
+      case 'gatling':
+        if (k.f && t.cool <= 0) {
+          spawnProjectile(g, t, 'g', W.GATLING_SPEED, { spread: 0.07, life: W.GATLING_LIFE });
+          t.cool = W.GATLING_RATE; t.ammo--; g.events.push({ type: 'gat', id: t.id });
+          if (t.ammo <= 0) t.weapon = null;
+        }
+        break;
+      case 'laser': if (pressed) { fireBeam(g, t, 'laser'); t.weapon = null; } break;
+      case 'frag': {
+        const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
+        if (pressed) {
+          if (bomb) { burstFrag(g, bomb); g.bullets = g.bullets.filter(b => b !== bomb); t.weapon = null; t.bombId = 0; }
+          else if (!t.bombId) { t.bombId = spawnProjectile(g, t, 'bomb', W.FRAG_SPEED, { life: W.FRAG_FUSE, fuse: true }).id; g.events.push({ type: 'fire', id: t.id }); }
+        }
+        if (t.bombId && !bomb && !pressed) { t.weapon = null; t.bombId = 0; } // auto-burst already happened
+        break;
+      }
+      case 'deathray': if (pressed && t.charge <= 0) { t.charge = W.RAY_CHARGE; g.events.push({ type: 'charge', id: t.id }); } break;
+      case 'missile':
+        if (pressed) { spawnProjectile(g, t, 'missile', W.MISSILE_SPEED, { life: W.MISSILE_LIFE, grace: 0.5 }); t.weapon = null; g.events.push({ type: 'missile', id: t.id }); }
+        break;
+      case 'mine':
+        if (pressed) {
+          g.mines.push({ id: g.nextId++, owner: t.id, x: t.x - Math.cos(t.a) * (C.TANK_R + 6), y: t.y - Math.sin(t.a) * (C.TANK_R + 6), age: 0 });
+          const m = g.mines[g.mines.length - 1]; pushCircleOut(m, 5, g.rects);
+          g.events.push({ type: 'mine', id: t.id });
+          if (--t.ammo <= 0) t.weapon = null;
+        }
+        break;
+    }
+  }
+
+  // next waypoint for a homing missile: BFS through the maze towards the target's cell
+  function cellOf(g, x, y) { return [Math.max(0, Math.min(g.maze.cols - 1, Math.floor(x / C.CELL))), Math.max(0, Math.min(g.maze.rows - 1, Math.floor(y / C.CELL)))]; }
+  function nextWaypoint(g, x, y, tx, ty) {
+    const m = g.maze, [sc, sr] = cellOf(g, x, y), [ec, er] = cellOf(g, tx, ty);
+    if (sc === ec && sr === er) return [tx, ty];
+    const prev = new Map(), key = (c, r) => r * m.cols + c, q = [[ec, er]]; prev.set(key(ec, er), null);
+    while (q.length) { // search from target back to missile so the first step is easy to read
+      const [c, r] = q.shift();
+      if (c === sc && r === sr) break;
+      const nb = [];
+      if (c > 0 && !m.vw[r][c]) nb.push([c - 1, r]); if (c < m.cols - 1 && !m.vw[r][c + 1]) nb.push([c + 1, r]);
+      if (r > 0 && !m.hw[r][c]) nb.push([c, r - 1]); if (r < m.rows - 1 && !m.hw[r + 1][c]) nb.push([c, r + 1]);
+      for (const n of nb) { const kk = key(n[0], n[1]); if (!prev.has(kk)) { prev.set(kk, [c, r]); q.push(n); } }
+    }
+    const nx = prev.get(key(sc, sr));
+    if (!nx) return [tx, ty];
+    return [(nx[0] + 0.5) * C.CELL, (nx[1] + 0.5) * C.CELL];
+  }
+
+  // inputs: { [playerId]: {u,d,l,r,f} }
+  function step(g, inputs, dt) {
+    g.time += dt;
+    const tanks = Object.values(g.tanks);
+    for (const t of tanks) {
+      if (!t.alive) continue;
+      const k = inputs[t.id] || {};
+      let rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = (k.u ? 1 : 0) - (k.d ? 1 : 0);
+      if (t.charge > 0) mv = 0; // death ray: tank is locked in place while charging (can still aim)
+      t.a += rot * C.TANK_ROT * dt;
+      if (t.a > Math.PI) t.a -= 2 * Math.PI; else if (t.a < -Math.PI) t.a += 2 * Math.PI;
+      const sp = mv > 0 ? C.TANK_SPEED : C.TANK_SPEED * 0.7;
+      t.x += Math.cos(t.a) * mv * sp * dt; t.y += Math.sin(t.a) * mv * sp * dt;
+      pushCircleOut(t, C.TANK_R, g.rects);
+      t.cool -= dt;
+      const pressed = k.f && !t.fireHeld;
+      if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; fireBeam(g, t, 'deathray'); t.weapon = null; } }
+      else if (t.weapon) useWeapon(g, t, k, pressed);
+      else if (pressed) fire(g, t);
+      t.fireHeld = !!k.f;
+      // crate pickup (only with an empty slot)
+      if (!t.weapon) for (let i = 0; i < g.crates.length; i++) {
+        const c = g.crates[i];
+        if (Math.hypot(c.x - t.x, c.y - t.y) < C.TANK_R + W.CRATE_R) { giveWeapon(t, c.type); g.crates.splice(i, 1); g.events.push({ type: 'pickup', id: t.id, weapon: c.type }); break; }
+      }
+    }
+    // tank vs tank
+    for (let i = 0; i < tanks.length; i++) for (let j = i + 1; j < tanks.length; j++) {
+      const a = tanks[i], b = tanks[j]; if (!a.alive || !b.alive) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), m = 2 * C.TANK_R;
+      if (d < m && d > 1e-6) { const p = (m - d) / 2; a.x -= dx / d * p; a.y -= dy / d * p; b.x += dx / d * p; b.y += dy / d * p; pushCircleOut(a, C.TANK_R, g.rects); pushCircleOut(b, C.TANK_R, g.rects); }
+    }
+    // projectiles
+    const keep = [], born = [];
+    const all = g.bullets; g.bullets = born; // bursts during this loop land in `born`
+    for (const b of all) {
+      b.age += dt;
+      const life = b.life != null ? b.life : C.BULLET_LIFE;
+      if (b.age > life) { if (b.kind === 'bomb') burstFrag(g, b); continue; }
+      if (b.kind === 'missile' && b.age > W.MISSILE_SEEK_AFTER) {
+        let tgt = null, bd = 1e9;
+        for (const t of tanks) if (t.alive && (t.id !== b.owner || b.age > 3)) { const d = Math.hypot(t.x - b.x, t.y - b.y); if (d < bd) { bd = d; tgt = t; } }
+        if (tgt) {
+          const [wx, wy] = nextWaypoint(g, b.x, b.y, tgt.x, tgt.y);
+          let want = Math.atan2(wy - b.y, wx - b.x), cur = Math.atan2(b.vy, b.vx), d = want - cur;
+          while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+          cur += Math.max(-W.MISSILE_TURN * dt, Math.min(W.MISSILE_TURN * dt, d));
+          b.vx = Math.cos(cur) * W.MISSILE_SPEED; b.vy = Math.sin(cur) * W.MISSILE_SPEED;
+        }
+      }
+      if (moveBullet(b, Math.hypot(b.vx, b.vy) * dt, g.rects)) g.events.push({ type: 'bounce' });
+      b.a = Math.atan2(b.vy, b.vx);
+      let hit = false;
+      for (const t of tanks) {
+        if (!t.alive) continue;
+        if (t.id === b.owner && b.age < (b.grace != null ? b.grace : C.OWNER_GRACE)) continue;
+        const dx = t.x - b.x, dy = t.y - b.y, r = C.TANK_R + b.r - 1;
+        if (dx * dx + dy * dy < r * r) { kill(g, t, b.owner, b.kind); hit = true; break; }
+      }
+      if (hit && b.kind === 'bomb') burstFrag(g, b);
+      if (!hit) keep.push(b);
+    }
+    g.bullets = keep.concat(born);
+    // mines
+    for (const m of g.mines) m.age += dt;
+    g.mines = g.mines.filter(m => {
+      if (m.age < W.MINE_ARM) return true;
+      if (!tanks.some(t => t.alive && Math.hypot(t.x - m.x, t.y - m.y) < C.TANK_R + W.MINE_TRIGGER - 6)) return true;
+      for (const t of tanks) if (t.alive && Math.hypot(t.x - m.x, t.y - m.y) < W.MINE_BLAST + C.TANK_R) kill(g, t, m.owner, 'mine');
+      g.events.push({ type: 'burst', x: m.x, y: m.y, mine: true });
+      return false;
+    });
+    // beams fade
+    for (const bm of g.beams) bm.life -= dt;
+    g.beams = g.beams.filter(bm => bm.life > 0);
+    // crates
+    g.crateTimer -= dt;
+    if (g.crateTimer <= 0 && g.phase === 'play') { if (g.crates.length < W.MAX_CRATES) spawnCrate(g); g.crateTimer = rand(W.CRATE_MIN, W.CRATE_MAX); }
+    // round flow
+    const alive = tanks.filter(t => t.alive);
+    if (g.phase === 'play') {
+      const over = g.players.length >= 2 ? alive.length <= 1 : alive.length === 0;
+      if (over && tanks.length) { g.phase = 'ending'; g.endTimer = C.ROUND_END_DELAY; }
+    } else if (g.phase === 'ending') {
+      g.endTimer -= dt;
+      if (g.endTimer <= 0) {
+        const still = Object.values(g.tanks).filter(t => t.alive);
+        if (still.length === 1 && g.players.length >= 2) {
+          const p = g.players.find(p => p.id === still[0].id); if (p) { p.score++; g.events.push({ type: 'point', id: p.id }); }
+        }
+        newRound(g);
+      }
+    }
+  }
+
+  function fire(g, t) {
+    const own = g.bullets.reduce((n, b) => n + (b.owner === t.id && b.kind === 'b' ? 1 : 0), 0);
+    if (own >= C.MAX_BULLETS) return;
+    spawnProjectile(g, t, 'b', C.BULLET_SPEED);
+    g.events.push({ type: 'fire', id: t.id });
+  }
+
+  const r1 = v => Math.round(v * 10) / 10;
+  const KINDS = ['b', 'g', 'frag', 'bomb', 'missile'];
+  function snapshot(g) {
+    return {
+      t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round(t.charge * 100) / 100]),
+      b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100]),
+      cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
+      mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), m.age >= W.MINE_ARM ? 1 : 0, m.owner]),
+      bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
+      sc: g.players.map(p => [p.id, p.score]),
+    };
+  }
+
+  return { C, W, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, moveBullet, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+});
+
+</script>
+<script>
+// Tank Tussle AI bots. Pure input generator: think(game, tank, brain, dt) -> {u,d,l,r,f}
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./game.js'));
+  else root.TTBots = factory(root.TT);
+})(typeof self !== 'undefined' ? self : this, function (TT) {
+  'use strict';
+  const { C, W } = TT;
+  const LEVELS = {
+    easy:   { react: 0.42, aimErr: 0.22, dodge: 0.25, bounces: 0, fireGap: 0.9, rayLen: 420 },
+    normal: { react: 0.24, aimErr: 0.10, dodge: 0.65, bounces: 1, fireGap: 0.55, rayLen: 520 },
+    hard:   { react: 0.12, aimErr: 0.04, dodge: 0.95, bounces: 2, fireGap: 0.35, rayLen: 620 },
+  };
+  const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  const cellOf = (g, x, y) => [Math.max(0, Math.min(g.maze.cols - 1, Math.floor(x / C.CELL))), Math.max(0, Math.min(g.maze.rows - 1, Math.floor(y / C.CELL)))];
+
+  function neighbours(m, c, r) {
+    const nb = [];
+    if (c > 0 && !m.vw[r][c]) nb.push([c - 1, r]); if (c < m.cols - 1 && !m.vw[r][c + 1]) nb.push([c + 1, r]);
+    if (r > 0 && !m.hw[r][c]) nb.push([c, r - 1]); if (r < m.rows - 1 && !m.hw[r + 1][c]) nb.push([c, r + 1]);
+    return nb;
+  }
+  // BFS distance field + parent pointers from (c,r)
+  function bfs(m, c0, r0) {
+    const N = m.cols * m.rows, dist = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), q = [r0 * m.cols + c0];
+    dist[q[0]] = 0;
+    for (let i = 0; i < q.length; i++) {
+      const k = q[i], c = k % m.cols, r = (k / m.cols) | 0;
+      for (const [nc, nr] of neighbours(m, c, r)) { const nk = nr * m.cols + nc; if (dist[nk] < 0) { dist[nk] = dist[k] + 1; par[nk] = k; q.push(nk); } }
+    }
+    return { dist, par };
+  }
+  function firstStep(m, field, startK, goalK) {
+    let k = goalK, prev = goalK;
+    while (k !== startK && k >= 0) { prev = k; k = field.par[k]; }
+    return prev;
+  }
+  // Simulate a ray from the barrel: who does it hit first? (respects bounce budget; self counts after it leaves the barrel)
+  function rayVerdict(g, t, a, len, maxBounces, ignoreSelf) {
+    const ray = TT.traceRay(g.rects, t.x + Math.cos(a) * 8, t.y + Math.sin(a) * 8, a, len, 4);
+    let bounces = 0, bi = 1, hitEnemy = false;
+    for (const [x, y, d] of ray.samples) {
+      while (bi < ray.pts.length - 1 && ray.pts[bi][2] <= d) { bounces++; bi++; }
+      if (bounces > maxBounces && !hitEnemy) return null;
+      for (const o of Object.values(g.tanks)) {
+        if (!o.alive) continue;
+        if (o.id === t.id) { if (ignoreSelf || d < C.TANK_R + 10) continue; if (Math.hypot(o.x - x, o.y - y) < C.TANK_R + 6) return hitEnemy ? 'risky' : 'self'; continue; }
+        if (!hitEnemy && Math.hypot(o.x - x, o.y - y) < C.TANK_R + 2) hitEnemy = true; // keep scanning: if we miss, does it come back at us?
+      }
+    }
+    return hitEnemy ? 'enemy' : null;
+  }
+  function clearLine(g, x0, y0, x1, y1) {
+    const d = Math.hypot(x1 - x0, y1 - y0), n = Math.ceil(d / 6);
+    for (let i = 1; i < n; i++) { const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n; if (g.rects.some(q => TT.circleHitsRect(x, y, 2, q))) return false; }
+    return true;
+  }
+  // Is a projectile about to hit me? Returns the threatening bullet's velocity or null.
+  function threat(g, t) {
+    for (const b of g.bullets) {
+      if (Math.hypot(b.x - t.x, b.y - t.y) > 170) continue;
+      if (b.owner === t.id && b.age < 0.25) continue;
+      const p = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, r: b.r };
+      for (let s = 0; s < 8; s++) {
+        TT.moveBullet(p, Math.hypot(p.vx, p.vy) * 0.08, g.rects);
+        if (Math.hypot(p.x - t.x, p.y - t.y) < C.TANK_R + p.r + 7) return p;
+      }
+    }
+    for (const m of g.mines) if (m.age > 0.5 && Math.hypot(m.x - t.x, m.y - t.y) < 60) return { vx: t.x - m.x, vy: t.y - m.y, mine: m };
+    return null;
+  }
+
+  function newBrain(level) { return { L: LEVELS[level] || LEVELS.normal, next: 0, lastF: false, cool: 0, aimOff: 0, plan: null, stuckT: 0, lastPos: null, reverseT: 0, hold: 0 }; }
+
+  function think(g, t, br, dt) {
+    const k = { u: false, d: false, l: false, r: false, f: false };
+    if (!t || !t.alive || !g.maze) return k;
+    const L = br.L;
+    br.next -= dt; br.cool -= dt; br.reverseT -= dt; br.hold -= dt;
+    // stuck detection
+    if (br.lastPos) { const mv = Math.hypot(t.x - br.lastPos[0], t.y - br.lastPos[1]); br.stuckT = br.plan && br.plan.move && mv < 0.4 ? br.stuckT + dt : 0; }
+    br.lastPos = [t.x, t.y];
+    if (br.stuckT > 0.7) { br.reverseT = 0.35; br.stuckT = 0; br.turnDir = Math.random() < 0.5 ? -1 : 1; }
+
+    if (br.next <= 0) { // ---- decision tick (reaction time) ----
+      br.next = L.react * (0.7 + Math.random() * 0.6);
+      const m = g.maze, [c0, r0] = cellOf(g, t.x, t.y), startK = r0 * m.cols + c0, field = bfs(m, c0, r0);
+      const enemies = Object.values(g.tanks).filter(o => o.alive && o.id !== t.id);
+      let target = null, td = 1e9;
+      for (const o of enemies) { const [c, r] = cellOf(g, o.x, o.y), d = field.dist[r * m.cols + c]; const dd = (d < 0 ? 99 : d) + Math.hypot(o.x - t.x, o.y - t.y) / 1000; if (dd < td) { td = dd; target = o; } }
+      // crate if we have no weapon and one is reasonably close
+      let goal = target, goalD = td;
+      if (!t.weapon) for (const cr of g.crates) { const [c, r] = cellOf(g, cr.x, cr.y), d = field.dist[r * m.cols + c]; if (d >= 0 && d < goalD * 0.8 + 1 && d < 7) { goal = cr; goalD = d; } }
+      const plan = { move: true, aim: null, fire: false, dodge: null, goal };
+      // dodge
+      const th = Math.random() < L.dodge ? threat(g, t) : null;
+      if (th) {
+        const away = Math.atan2(-th.vy, -th.vx), perp1 = wrap(away + Math.PI / 2), perp2 = wrap(away - Math.PI / 2);
+        const pick = th.mine ? Math.atan2(t.y - th.mine.y, t.x - th.mine.x) : (Math.abs(wrap(perp1 - t.a)) < Math.abs(wrap(perp2 - t.a)) ? perp1 : perp2);
+        const fwd = Math.abs(wrap(pick - t.a)) < Math.PI / 2;
+        plan.dodge = { angle: fwd ? pick : wrap(pick + Math.PI), back: !fwd };
+      }
+      // aim at visible target
+      if (target) {
+        const vis = clearLine(g, t.x, t.y, target.x, target.y);
+        const dist = Math.hypot(target.x - t.x, target.y - t.y);
+        if (vis) {
+          if (Math.abs(br.aimOff) < 1e-6 || Math.random() < 0.3) br.aimOff = (Math.random() * 2 - 1) * L.aimErr;
+          plan.aim = Math.atan2(target.y - t.y, target.x - t.x) + br.aimOff;
+          plan.move = dist > 170 && t.weapon !== 'deathray';
+        }
+        // firing decision by weapon
+        const w = t.weapon;
+        const now = rayVerdict(g, t, t.a, w === 'laser' ? W.LASER_LEN : w === 'deathray' ? W.RAY_LEN : L.rayLen, w === 'laser' || w === 'deathray' ? 9 : L.bounces, w === 'deathray');
+        if (br.cool <= 0) {
+          if (!w || w === 'gatling') plan.fire = now === 'enemy' || (now === 'risky' && Math.random() < 0.2);
+          else if (w === 'laser' || w === 'deathray') plan.fire = now === 'enemy' || now === 'risky';
+          else if (w === 'frag') {
+            const bomb = t.bombId && g.bullets.find(b => b.id === t.bombId);
+            if (bomb) plan.fire = enemies.some(o => Math.hypot(o.x - bomb.x, o.y - bomb.y) < 55) && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 70 || (bomb.age > 1.8 && Math.hypot(t.x - bomb.x, t.y - bomb.y) > 90);
+            else plan.fire = vis && dist < 260 && dist > 90 && now !== 'self';
+          }
+          else if (w === 'missile') plan.fire = now !== 'self' && rayVerdict(g, t, t.a, 40, 0, false) !== 'self' && clearLine(g, t.x, t.y, t.x + Math.cos(t.a) * 30, t.y + Math.sin(t.a) * 30);
+          else if (w === 'mine') plan.fire = td < 4 && Math.random() < 0.5;
+        }
+        if (w === 'deathray' && t.charge > 0) plan.move = false;
+      }
+      br.plan = plan;
+    }
+
+    const plan = br.plan; if (!plan) return k;
+    // ---- continuous steering ----
+    let wantA = null, drive = 0;
+    if (br.reverseT > 0) { k.d = true; (br.turnDir > 0 ? (k.r = true) : (k.l = true)); return finish(); }
+    if (plan.dodge) { wantA = plan.dodge.angle; drive = plan.dodge.back ? -1 : 1; }
+    else if (plan.aim != null) { wantA = plan.aim; drive = plan.move ? 1 : 0; }
+    else if (plan.goal) {
+      const m = g.maze, [c0, r0] = cellOf(g, t.x, t.y), [gc, gr] = cellOf(g, plan.goal.x, plan.goal.y);
+      let wx = plan.goal.x, wy = plan.goal.y;
+      if (c0 !== gc || r0 !== gr) {
+        if (!br.field || br.fieldCell !== r0 * m.cols + c0 || br.fieldRound !== g.round) { br.field = bfs(m, c0, r0); br.fieldCell = r0 * m.cols + c0; br.fieldRound = g.round; }
+        const nk = firstStep(m, br.field, r0 * m.cols + c0, gr * m.cols + gc), nc = nk % m.cols, nr = (nk / m.cols) | 0;
+        const ccx = (c0 + 0.5) * C.CELL, ccy = (r0 + 0.5) * C.CELL;
+        wx = (nc + 0.5) * C.CELL; wy = (nr + 0.5) * C.CELL;
+        // line up with the corridor before turning through a gap
+        if (nc !== c0 && Math.abs(t.y - ccy) > 10) { wx = ccx; wy = ccy; }
+        if (nr !== r0 && Math.abs(t.x - ccx) > 10) { wx = ccx; wy = ccy; }
+      }
+      wantA = Math.atan2(wy - t.y, wx - t.x); drive = 1;
+    }
+    if (wantA != null) {
+      const d = wrap(wantA - t.a);
+      if (d > 0.06) k.r = true; else if (d < -0.06) k.l = true;
+      if (drive > 0 && Math.abs(d) < 0.6) k.u = true;
+      if (drive < 0 && Math.abs(d) < 0.6) k.d = true;
+    }
+    // fire (needs a fresh press each time, except gatling which is held)
+    if (plan.fire && br.cool <= 0) {
+      if (t.weapon === 'gatling') k.f = true;
+      else if (!br.lastF) { k.f = true; br.cool = t.weapon ? 0.3 : L.fireGap * (0.7 + Math.random() * 0.6); plan.fire = false; }
+    }
+    return finish();
+    function finish() { br.lastF = k.f; return k; }
+  }
+  return { LEVELS, newBrain, think };
+});
+
+</script>
+<script>
+'use strict';
+(() => {
+const { C, COLORS } = TT;
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+
+// ---------- key sets ----------
+const LOCAL = [
+  { name: 'Red',    keys: { u: 'KeyE', l: 'KeyS', d: 'KeyD', r: 'KeyF', f: 'KeyQ' }, label: ['E', 'S', 'D', 'F', 'Q'] },
+  { name: 'Green',  keys: { u: 'ArrowUp', l: 'ArrowLeft', d: 'ArrowDown', r: 'ArrowRight', f: ['KeyM', 'Slash'] }, label: ['↑', '←', '↓', '→', 'M'] },
+  { name: 'Blue',   keys: { u: 'KeyI', l: 'KeyJ', d: 'KeyK', r: 'KeyL', f: 'KeyU' }, label: ['I', 'J', 'K', 'L', 'U'] },
+  { name: 'Yellow', keys: { u: 'Numpad8', l: 'Numpad4', d: 'Numpad5', r: 'Numpad6', f: 'Numpad0' }, label: ['Num8', 'Num4', 'Num5', 'Num6', 'Num0'] },
+];
+const ONLINE_KEYS = { u: ['ArrowUp', 'KeyW'], l: ['ArrowLeft', 'KeyA'], d: ['ArrowDown', 'KeyS'], r: ['ArrowRight', 'KeyD'], f: ['Space', 'KeyM', 'Enter'] };
+const GAME_CODES = new Set([...LOCAL.map(s => Object.values(s.keys)), ...Object.values(ONLINE_KEYS)].flat(2));
+
+const down = new Set(), tapped = new Set();
+addEventListener('keydown', e => {
+  if (e.code === 'Escape') { if (mode) togglePause(); return; }
+  if (!mode || inOverlay()) return;
+  if (GAME_CODES.has(e.code)) e.preventDefault();
+  down.add(e.code); tapped.add(e.code); audioInit();
+  if (mode === 'online' && net) onlineInput();
+});
+addEventListener('keyup', e => { down.delete(e.code); if (mode === 'online' && net) onlineInput(); });
+addEventListener('blur', () => down.clear());
+const pressed = c => Array.isArray(c) ? c.some(x => down.has(x) || tapped.has(x)) : (down.has(c) || tapped.has(c));
+const readKeys = ks => ({ u: pressed(ks.u), d: pressed(ks.d), l: pressed(ks.l), r: pressed(ks.r), f: pressed(ks.f) });
+const merge = (a, b) => ({ u: a.u || b.u, d: a.d || b.d, l: a.l || b.l, r: a.r || b.r, f: a.f || b.f });
+
+// ---------- menu ----------
+let nLocal = isTouch ? 1 : 2, nBots = isTouch ? 1 : 0, botLevel = 'normal';
+const MAX_TANKS = 8;
+function keysHtml(n) {
+  return LOCAL.slice(0, n).map((s, i) => `<div><span class="dot" style="background:${COLORS[i]}"></span><b>P${i + 1} ${s.name}</b>: ${s.label.slice(0, 4).map(k => `<kbd>${k}</kbd>`).join('')} move · <kbd>${s.label[4]}</kbd> fire</div>`).join('')
+    + (n >= 4 ? '<div class="muted">P4 needs a numeric keypad (Num Lock on or off both work).</div>' : '')
+    + (nBots ? `<div><span class="dot" style="background:${COLORS[n]}"></span><b>${nBots} bot${nBots > 1 ? 's' : ''}</b> (${botLevel}) — colours ${COLOR_NAMES_FOR(n, nBots)}</div>` : '')
+    + (n + nBots < 2 ? '<div class="err">Need at least 2 tanks — add a player or a bot.</div>' : '');
+}
+const COLOR_NAMES_FOR = (from, k) => TT.COLOR_NAMES.slice(from, from + k).join(', ');
+function refreshMenu() {
+  nBots = Math.max(0, Math.min(nBots, MAX_TANKS - nLocal));
+  document.querySelectorAll('#nSel button[data-n]').forEach(b => b.classList.toggle('sel', +b.dataset.n === nLocal));
+  document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
+  $('botN').textContent = nBots;
+  $('keysLocal').innerHTML = keysHtml(nLocal);
+  $('playLocal').disabled = nLocal + nBots < 2;
+  $('touchNote').textContent = isTouch ? 'On a phone/tablet: P1 (Red) gets a stick + FIRE; with 2 humans Red uses the left side, Green the right.' : '';
+}
+document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
+document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
+$('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
+$('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
+refreshMenu();
+const qs = new URLSearchParams(location.search);
+$('name').value = localStorage.getItem('tt-name') || '';
+if (qs.get('room')) { $('code').value = qs.get('room').toUpperCase(); setTimeout(() => $('name').focus(), 50); }
+
+const inOverlay = () => !$('pause').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
+function show(id, on) { $(id).classList.toggle('hidden', !on); }
+let msgTimer;
+function flash(t, ms = 2500) { $('msg').textContent = t; show('msg', true); clearTimeout(msgTimer); msgTimer = setTimeout(() => show('msg', false), ms); }
+
+// ---------- state ----------
+let mode = null;           // 'local' | 'online'
+let game = null;           // local game
+let paused = false;
+let net = null;            // online state
+const particles = [];
+
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel);
+$('create').onclick = () => connect({ t: 'create' });
+$('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
+$('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
+$('resume').onclick = () => togglePause(false);
+$('quit').onclick = () => quit();
+$('toLobby').onclick = () => { net && net.send({ t: 'stop' }); togglePause(false); };
+$('menuBtn').onclick = () => togglePause(true);
+$('leave').onclick = () => quit();
+$('copy').onclick = () => { const l = $('link'); l.select(); (navigator.clipboard ? navigator.clipboard.writeText(l.value) : Promise.reject()).then(() => flash('Link copied'), () => document.execCommand('copy')); };
+$('start').onclick = () => net && net.send({ t: 'start' });
+$('lbPlus').onclick = () => net && net.send({ t: 'addBot' });
+$('lbMinus').onclick = () => net && net.send({ t: 'removeBot' });
+document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
+if ($('server')) { $('server').value = new URLSearchParams(location.search).get('server') || window.TT_SERVER_URL || (/^https?:$/.test(location.protocol) && !window.TT_STATIC ? '' : localStorage.getItem('tt-server') || ''); }
+
+function togglePause(on) {
+  if (on === undefined) on = $('pause').classList.contains('hidden');
+  if (!$('lobby').classList.contains('hidden')) return;
+  paused = on && mode === 'local';
+  show('toLobbyRow', mode === 'online' && net && net.you === net.host);
+  show('pause', on);
+}
+function quit(keepErr) {
+  if (net) { net.closed = true; try { net.send({ t: 'leave' }); net.ws.close(); } catch {} net = null; }
+  mode = null; game = null; paused = false; particles.length = 0;
+  ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
+  show('menu', true); refreshMenu();
+  history.replaceState(null, '', location.pathname);
+}
+
+// ---------- local game ----------
+let brains = {};
+function startLocal(n, bots = 0, level = 'normal') {
+  audioInit();
+  mode = 'local'; game = TT.createGame(); paused = false; brains = {};
+  for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i });
+  for (let j = 0; j < bots && n + j < MAX_TANKS; j++) {
+    const id = n + j + 1; TT.addPlayer(game, { id, name: `Bot ${j + 1}`, colorIndex: n + j });
+    game.players[game.players.length - 1].bot = true; brains[id] = TTBots.newBrain(level);
+  }
+  TT.newRound(game); game.events.length = 0;
+  show('menu', false); show('menuBtn', true);
+  setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
+  flash(n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
+}
+let acc = 0;
+function localTick(dt) {
+  if (paused) return;
+  acc = Math.min(acc + dt, 0.25);
+  while (acc >= 1 / 60) {
+    const inputs = {};
+    game.players.forEach((p, i) => {
+      if (p.bot) { inputs[p.id] = TTBots.think(game, game.tanks[p.id], brains[p.id], 1 / 60); return; }
+      let k = readKeys(LOCAL[i].keys); if (touchIn[i]) k = merge(k, touchIn[i]); inputs[p.id] = k;
+    });
+    TT.step(game, inputs, 1 / 60); tapped.clear();
+    handleEvents(game.events.splice(0), id => game.tanks[id]);
+    acc -= 1 / 60;
+  }
+}
+
+// ---------- online ----------
+// Server URL: ?server=... > window.TT_SERVER_URL (config.js) > same origin (when served by server.js) > last used
+function serverBase() {
+  const q = new URLSearchParams(location.search).get('server') || ($('server') && $('server').value.trim());
+  let s = q || window.TT_SERVER_URL || '';
+  if (!s && /^https?:$/.test(location.protocol) && !window.TT_STATIC) s = location.origin;
+  if (!s) s = localStorage.getItem('tt-server') || '';
+  if (s && !/^(https?|wss?):\/\//.test(s)) s = 'https://' + s;
+  return s.replace(/\/+$/, '');
+}
+const wsUrlOf = base => (/^wss?:/.test(base) ? base : base.replace(/^http/, 'ws')).replace(/\/ws$/, '') + '/ws';
+function shareLink(code) {
+  const base = serverBase(), sameOrigin = /^https?:$/.test(location.protocol) && base === location.origin;
+  if (/^https?:$/.test(location.protocol)) return location.origin + location.pathname + '?room=' + code + (sameOrigin || base === (window.TT_SERVER_URL || '').replace(/\/+$/, '') ? '' : '&server=' + encodeURIComponent(base));
+  return base.replace(/^ws/, 'http') + '/?room=' + code; // standalone file: link to the client the server hosts
+}
+function connect(first) {
+  const base = serverBase();
+  if (!base) return ($('err').textContent = 'No game server set. Run "npm start" and open http://localhost:8090, or enter a server URL above.');
+  audioInit();
+  const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
+  $('err').textContent = 'Connecting…';
+  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null,
+    send(m) { this.ws && this.ws.readyState === 1 && this.ws.send(JSON.stringify(m)); } };
+  openSocket(net, Object.assign({ name }, first));
+}
+function openSocket(me, firstMsg) {
+  let ws;
+  try { ws = new WebSocket(wsUrlOf(me.base)); } catch (e) { $('err').textContent = 'Bad server URL.'; return; }
+  me.ws = ws;
+  ws.onopen = () => { me.retries = 0; ws.send(JSON.stringify(firstMsg)); };
+  ws.onerror = () => { if (!me.code) $('err').textContent = 'Could not connect to the server (' + me.base + '). Free servers can take ~1 min to wake up — try again.'; };
+  ws.onclose = () => {
+    if (me.closed || net !== me || me.ws !== ws) return;
+    if (me.token && me.retries < 12) { // try to get our slot back
+      me.retries++; flash('Connection lost — reconnecting… (' + me.retries + ')', 2000);
+      setTimeout(() => { if (net === me && !me.closed) openSocket(me, { t: 'rejoin', code: me.code, token: me.token }); }, 1200);
+      return;
+    }
+    quit(); $('err').textContent = 'Disconnected from the server.';
+  };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.t === 'error') {
+      if (m.soft) { flash(m.msg); return; }
+      $('err').textContent = m.msg; me.closed = true; ws.close(); if (net === me) quit(true); $('err').textContent = m.msg; return;
+    }
+    if (m.t === 'joined') {
+      const re = !!me.token;
+      me.you = m.you; me.code = m.code; me.token = m.token; mode = 'online'; $('err').textContent = '';
+      localStorage.setItem('tt-server', me.base);
+      history.replaceState(null, '', '?room=' + m.code + (new URLSearchParams(location.search).get('server') ? '&server=' + encodeURIComponent(new URLSearchParams(location.search).get('server')) : ''));
+      show('menu', false); show('menuBtn', true); if (!re) setupTouch(isTouch ? 'online' : null); else flash('Reconnected!');
+    } else if (m.t === 'lobby') {
+      me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level;
+      if (me.started && !m.started) { me.maze = null; me.snaps = []; }
+      me.started = m.started; renderLobby();
+    } else if (m.t === 'maze') {
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = [];
+    } else if (m.t === 's') {
+      if (m.round !== me.round) return;
+      const now = performance.now(), est = m.time - now;
+      me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4] }])),
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], armed: !!x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
+      me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
+      for (const [id, sc] of m.sc) { const p = me.players.find(p => p.id === id); if (p) p.score = sc; }
+      if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
+    }
+  };
+}
+function renderLobby() {
+  if (!net) return;
+  $('roomCode').textContent = net.code;
+  $('link').value = shareLink(net.code);
+  $('plist').innerHTML = net.players.map(p => `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${COLORS[p.color]}"></span>${esc(p.name)}${p.bot ? ` <span class="muted">🤖 ${esc(net.level || '')}</span>` : ''}${p.id === net.you ? ' <span class="muted">(you)</span>' : ''}${p.id === net.host ? ' <span class="muted">· host</span>' : ''}${p.online === false ? ' <span class="err">offline…</span>' : ''}</li>`).join('')
+    + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
+  const host = net.you === net.host;
+  show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
+  $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
+  document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
+  $('start').disabled = net.players.length < 1;
+  show('lobby', !net.started);
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function onlineInput() {
+  let k = inOverlay() ? { u: 0, d: 0, l: 0, r: 0, f: 0 } : readKeys(ONLINE_KEYS);
+  if (touchIn[0]) k = merge(k, touchIn[0]);
+  const s = JSON.stringify(k), now = performance.now();
+  tapped.clear();
+  if (s !== net.lastSent || now - net.lastSentAt > 250) { net.send({ t: 'input', k }); net.lastSent = s; net.lastSentAt = now; }
+}
+const INTERP_DELAY = 90;
+function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
+function onlineView() {
+  if (!net.maze || !net.snaps.length) return null;
+  const rt = performance.now() + net.offset - INTERP_DELAY, S = net.snaps;
+  let a = S[0], b = S[0];
+  if (rt >= S[S.length - 1].time) a = b = S[S.length - 1];
+  else for (let i = 0; i < S.length - 1; i++) if (S[i].time <= rt && S[i + 1].time >= rt) { a = S[i]; b = S[i + 1]; break; }
+  const t = b.time > a.time ? Math.min(1, Math.max(0, (rt - a.time) / (b.time - a.time))) : 1;
+  const tanks = [];
+  for (const [id, tb] of b.tanks) {
+    const ta = a.tanks.get(id) || tb;
+    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
+  }
+  const bullets = [];
+  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a }); else if (t > 0.5) bullets.push(bb); }
+  const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
+  handleEvents(due, id => tanks.find(x => x.id === id));
+  return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, you: p.id === net.you })) };
+}
+
+// ---------- effects & sound ----------
+let actx = null;
+function audioInit() { if (actx) { actx.state === 'suspended' && actx.resume(); return; } try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+function beep(freq, dur, type = 'square', vol = 0.05, slide = 0) {
+  if (!actx) return; const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+  o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+}
+function boom() {
+  if (!actx) return; const len = actx.sampleRate * 0.5, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+  const s = actx.createBufferSource(), g = actx.createGain(); g.gain.value = 0.25; s.buffer = buf; s.connect(g).connect(actx.destination); s.start();
+}
+function handleEvents(evs, tankOf) {
+  for (const e of evs) {
+    if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
+    else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
+    else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
+    else if (e.type === 'charge') beep(140, 1.0, 'sine', 0.05, 6);
+    else if (e.type === 'deathray') beep(900, 0.6, 'sawtooth', 0.05, 0.2);
+    else if (e.type === 'missile') beep(300, 0.35, 'triangle', 0.06, 0.5);
+    else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
+    else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
+    else if (e.type === 'burst') {
+      boom();
+      for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
+    }
+    else if (e.type === 'die') {
+      boom();
+      const p = (mode === 'local' ? game.players : net.players).find(p => p.id === e.id);
+      const col = p ? COLORS[p.color] : '#888';
+      for (let i = 0; i < 34; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 120; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.5 + Math.random() * 0.6, max: 1.1, col: i % 3 ? col : (i % 2 ? '#555' : '#f7b733'), r: 1.5 + Math.random() * 3 }); }
+    }
+  }
+}
+
+// ---------- touch controls ----------
+const touchIn = [null, null];
+function joystick(idx) {
+  const el = document.createElement('div'); el.className = 'joy'; el.innerHTML = '<div class="knob"></div>';
+  const knob = el.firstChild; let pid = null;
+  const upd = e => {
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2;
+    let dx = (e.clientX - cx) / R, dy = (e.clientY - cy) / R; const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
+    knob.style.transform = `translate(${dx * R * 0.6}px,${dy * R * 0.6}px)`;
+    const s = touchIn[idx]; s.u = dy < -0.35; s.d = dy > 0.35; s.l = dx < -0.35; s.r = dx > 0.35;
+  };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); pid = e.pointerId; el.setPointerCapture(pid); upd(e); });
+  el.addEventListener('pointermove', e => { if (e.pointerId === pid) upd(e); });
+  const end = e => { if (e.pointerId !== pid) return; pid = null; knob.style.transform = ''; const s = touchIn[idx]; s.u = s.d = s.l = s.r = false; };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  return el;
+}
+function fireBtn(idx, color) {
+  const el = document.createElement('div'); el.className = 'fire'; el.textContent = 'FIRE'; el.style.background = color;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); audioInit(); el.setPointerCapture(e.pointerId); touchIn[idx].f = true; el.classList.add('on'); });
+  const end = () => { touchIn[idx].f = false; el.classList.remove('on'); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  return el;
+}
+let padMode = null;
+function setupTouch(m) {
+  padMode = m; const L = $('padL'), R = $('padR'); L.innerHTML = R.innerHTML = ''; touchIn[0] = touchIn[1] = null;
+  if (!m) { show('padL', false); show('padR', false); return; }
+  touchIn[0] = { u: false, d: false, l: false, r: false, f: false };
+  if (m === 'local2') {
+    touchIn[1] = { u: false, d: false, l: false, r: false, f: false };
+    L.append(fireBtn(0, COLORS[0]), joystick(0)); R.append(fireBtn(1, COLORS[1]), joystick(1));
+  } else if (m === 'local1') {
+    L.append(joystick(0)); R.append(fireBtn(0, COLORS[0]));
+  } else { // online: stick left, fire right
+    const me = () => (net && net.players.find(p => p.id === net.you)) || { color: 0 };
+    L.append(joystick(0)); const f = fireBtn(0, COLORS[me().color]); R.append(f); setTimeout(() => (f.style.background = COLORS[me().color]), 1500);
+  }
+  show('padL', true); show('padR', true);
+}
+
+// ---------- rendering ----------
+function layout(maze) {
+  const W = innerWidth, H = innerHeight;
+  const side = padMode ? Math.min(180, Math.max(120, W * 0.19)) : 10;
+  const hud = Math.max(44, Math.min(70, H * 0.12));
+  const mw = maze.cols * C.CELL + 8, mh = maze.rows * C.CELL + 8;
+  const s = Math.min((W - side * 2) / mw, (H - hud - 16) / mh);
+  return { s, ox: (W - maze.cols * C.CELL * s) / 2, oy: Math.max(8, (H - hud - maze.rows * C.CELL * s) / 2), hud, side };
+}
+// Turret ("head") per weapon, drawn in tank-local coords facing +x. Each weapon has its own silhouette.
+function drawTurret(w, color, charge = 0) {
+  const OUT = 'rgba(0,0,0,.6)', DARK = '#333', T = performance.now() / 1000;
+  ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+  const disc = (x, y, r) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); ctx.stroke(); };
+  const box = (x, y, w2, h, fill = color) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.rect(x, y, w2, h); ctx.fill(); ctx.stroke(); };
+  switch (w) {
+    case 'gatling': // three-barrel rotary gun with a collar
+      for (const y of [-4.6, -1, 2.6]) box(2, y, 16, 2, DARK);
+      box(9, -6, 3.5, 12);
+      disc(-1, 0, 6.5);
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-1, 0, 2, 0, 6.283); ctx.fill();
+      break;
+    case 'laser': // thin, long, glowing barrel on a small angular head
+      ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8;
+      box(0, -1.3, 23, 2.6);
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(23, 0, 2.2, 0, 6.283); ctx.fill();
+      ctx.restore();
+      ctx.save(); ctx.translate(-1, 0); ctx.rotate(Math.PI / 4); box(-5, -5, 10, 10); ctx.restore();
+      break;
+    case 'frag': // stubby, wide mortar
+      disc(-3, 0, 5.5);
+      box(1, -7, 12, 14);
+      ctx.fillStyle = DARK; ctx.fillRect(10, -5, 3, 10);
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(4, -7, 2, 14);
+      break;
+    case 'deathray': { // emitter rod + dish
+      box(2, -1.6, 9, 3.2, DARK);
+      ctx.lineWidth = 3.4; ctx.strokeStyle = OUT; ctx.beginPath(); ctx.arc(19, 0, 9, Math.PI * 0.68, Math.PI * 1.32); ctx.stroke();
+      ctx.lineWidth = 2.2; ctx.strokeStyle = color; ctx.beginPath(); ctx.arc(19, 0, 9, Math.PI * 0.68, Math.PI * 1.32); ctx.stroke();
+      ctx.save(); ctx.shadowColor = '#7df'; ctx.shadowBlur = charge > 0 ? 14 : 5;
+      ctx.fillStyle = charge > 0 ? (Math.sin(T * 40) > 0 ? '#fff' : '#7df') : '#9ef'; ctx.beginPath(); ctx.arc(13, 0, charge > 0 ? 3 : 2, 0, 6.283); ctx.fill(); ctx.restore();
+      ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      disc(-1, 0, 6);
+      break;
+    }
+    case 'missile': // launcher tube with the missile nose poking out
+      ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      box(-3, -4.5, 18, 9);
+      ctx.fillStyle = DARK; ctx.fillRect(12.5, -3, 2.5, 6);
+      ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(-3, 1.5, 18, 1.5);
+      break;
+    case 'mine': // flat box, no barrel, hazard stripes
+      box(-8, -7.5, 15, 15);
+      ctx.save(); ctx.beginPath(); ctx.rect(-8, -7.5, 15, 15); ctx.clip(); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 2;
+      for (let k = -16; k < 16; k += 5) { ctx.beginPath(); ctx.moveTo(k - 8, 8); ctx.lineTo(k + 8, -8); ctx.stroke(); }
+      ctx.restore(); ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.arc(-0.5, 0, 2.5, 0, 6.283); ctx.fill();
+      break;
+    default: // standard cannon
+      box(1, -2, 15, 4, DARK);
+      disc(-1, 0, 6);
+  }
+}
+function drawTank(x, y, a, color, s = 1, weapon = null, charge = 0) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.scale(s, s);
+  ctx.fillStyle = '#3b3b3b'; ctx.fillRect(-13, -12, 25, 6); ctx.fillRect(-13, 6, 25, 6);           // treads
+  ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.rect(-11, -8, 21, 16); ctx.fill(); ctx.stroke();                              // hull
+  drawTurret(weapon, color, charge);
+  ctx.restore();
+}
+function drawCrate(c) {
+  const bob = Math.sin(performance.now() / 300 + c.id) * 1.2;
+  ctx.save(); ctx.translate(c.x, c.y + bob);
+  ctx.fillStyle = '#fafafa'; ctx.strokeStyle = '#555'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.rect(-11, -11, 22, 22); ctx.fill(); ctx.stroke();
+  ctx.scale(0.62, 0.62); ctx.translate(-3, 0); drawTurret(c.type, '#8a8a8a');
+  ctx.restore();
+}
+function drawProjectile(b) {
+  const k = b.kind || 'b';
+  if (k === 'missile') {
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a || 0);
+    ctx.fillStyle = Math.random() < 0.5 ? '#f7b733' : '#e8572a'; ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-11 - Math.random() * 3, 0); ctx.lineTo(-6, 2); ctx.fill();
+    ctx.fillStyle = '#555'; ctx.fillRect(-6, -2.5, 9, 5); ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
+    ctx.restore(); return;
+  }
+  ctx.fillStyle = k === 'frag' ? '#444' : '#222';
+  ctx.beginPath(); ctx.arc(b.x, b.y, TT.KIND_R[k] || C.BULLET_R, 0, 6.283); ctx.fill();
+  if (k === 'bomb') { ctx.fillStyle = Math.sin(performance.now() / 70) > 0 ? '#f33' : '#600'; ctx.beginPath(); ctx.arc(b.x, b.y, 1.8, 0, 6.283); ctx.fill(); }
+}
+function render(view, dt) {
+  const dpr = devicePixelRatio || 1;
+  if (cv.width !== Math.round(innerWidth * dpr) || cv.height !== Math.round(innerHeight * dpr)) { cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr); cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px'; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
+  if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
+  const m = view.maze, L = layout(m), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
+  const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
+  ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.s, L.s);
+  // floor + faint cell grid
+  ctx.fillStyle = '#ececec'; ctx.fillRect(0, 0, m.cols * CS, m.rows * CS);
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let c = 1; c < m.cols; c++) { ctx.moveTo(c * CS, 0); ctx.lineTo(c * CS, m.rows * CS); }
+  for (let r = 1; r < m.rows; r++) { ctx.moveTo(0, r * CS); ctx.lineTo(m.cols * CS, r * CS); }
+  ctx.stroke();
+  // mines (armed ones are barely visible)
+  for (const mn of view.mines || []) {
+    ctx.globalAlpha = mn.armed ? 0.22 : 1;
+    ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(mn.x, mn.y, 5.5, 0, 6.283); ctx.fill();
+    ctx.fillStyle = mn.armed ? '#333' : (Math.sin(performance.now() / 90) > 0 ? '#f33' : '#900'); ctx.beginPath(); ctx.arc(mn.x, mn.y, 2, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // crates
+  for (const c of view.crates || []) drawCrate(c);
+  // walls
+  ctx.fillStyle = '#4d4d4d';
+  for (const q of rects) ctx.fillRect(q.x, q.y, q.w, q.h);
+  // laser aim guides
+  for (const t of view.tanks) if (t.alive && t.weapon === 'laser') {
+    const ray = TT.traceRay(rects, t.x + Math.cos(t.a) * 8, t.y + Math.sin(t.a) * 8, t.a, TT.W.LASER_GUIDE, 4);
+    ctx.save(); ctx.strokeStyle = colorOf(t.id); ctx.globalAlpha = 0.55; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]); ctx.lineDashOffset = -performance.now() / 40;
+    ctx.beginPath(); ray.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.stroke(); ctx.restore();
+  }
+  // tanks
+  for (const t of view.tanks) if (t.alive) {
+    if (t.charge > 0) { // death ray charging glow
+      const k = 1 - t.charge / TT.W.RAY_CHARGE;
+      ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
+      ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
+    }
+    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+  }
+  // projectiles
+  for (const b of view.bullets) drawProjectile(b);
+  // beams
+  for (const bm of view.beams || []) {
+    const col = colorOf(bm.owner), ray = bm.kind === 'deathray';
+    ctx.save(); ctx.globalAlpha = Math.min(1, bm.life / 0.25); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.shadowColor = ray ? '#7df' : col; ctx.shadowBlur = 12;
+    const path = () => { ctx.beginPath(); bm.pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.stroke(); };
+    ctx.strokeStyle = ray ? '#5cf' : col; ctx.lineWidth = ray ? 7 : 3; path();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = ray ? 2.5 : 1; path();
+    ctx.restore();
+  }
+  // particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]; p.life -= dt; if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.93; p.vy *= 0.93;
+    ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+  }
+  ctx.globalAlpha = 1; ctx.restore();
+  // HUD: scores + current weapon at the bottom
+  const ps = view.players, n = ps.length, hy = innerHeight - L.hud / 2 - 4;
+  const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, n));
+  ctx.textBaseline = 'middle';
+  ps.forEach((p, i) => {
+    const cx = innerWidth / 2 + (i - (n - 1) / 2) * slot - 14, sc = Math.min(1.3, L.hud / 50, slot / 120);
+    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
+    ctx.fillStyle = '#333'; ctx.textAlign = 'left';
+    ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
+    // weapon icon box next to the score
+    const ix = cx + 30 * sc, iy = hy - 6 * sc, bs = 20 * sc;
+    ctx.fillStyle = w ? '#fafafa' : 'rgba(255,255,255,.35)'; ctx.strokeStyle = w ? '#555' : '#aaa'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.rect(ix - bs / 2, iy - bs / 2, bs, bs); ctx.fill(); ctx.stroke();
+    if (w) {
+      ctx.save(); ctx.translate(ix - 2 * sc, iy); ctx.scale(0.55 * sc, 0.55 * sc); drawTurret(w, COLORS[p.color]); ctx.restore();
+      if (w === 'gatling' || w === 'mine') { ctx.fillStyle = '#333'; ctx.font = `bold ${Math.round(9 * sc)}px Verdana, sans-serif`; ctx.fillText('×' + t.ammo, ix + bs / 2 + 2, iy); }
+    }
+    ctx.font = `${Math.round(10 * sc)}px Verdana, sans-serif`; ctx.fillStyle = '#555';
+    const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
+    ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
+  });
+}
+function localView() {
+  return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
+    crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, armed: m.age >= TT.W.MINE_ARM })),
+    legend: game.players.map((p, i) => p.bot ? p.name : `${LOCAL[i].label.slice(0, 4).join(' ')} + ${LOCAL[i].label[4]}`) };
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  let view = null;
+  if (mode === 'local' && game) { localTick(dt); view = localView(); }
+  else if (mode === 'online' && net) { onlineInput(); view = onlineView(); if (view) view.rects = net.rects; }
+  render(view, dt);
+  show('rotate', !!mode && isTouch && innerHeight > innerWidth);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__tt = { get game() { return game; }, get net() { return net; }, startLocal, down, drawTank, ctx, get paused() { return paused; }, set paused(v) { paused = v; } };
+})();
+
+</script>
+</body>
+</html>

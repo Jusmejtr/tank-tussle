@@ -1,58 +1,58 @@
 const puppeteer = require('puppeteer-core');
 const BASE = process.env.BASE || 'http://localhost:8090';
-const OUT = process.env.OUT || '/workspace/tank-trouble';
+const SECS = +process.env.SECS || 120;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
   const errs = [];
-  const mk = async (w = 1100, h = 760) => { const p = await browser.newPage(); await p.setViewport({ width: w, height: h }); p.on('pageerror', e => errs.push('pageerror: ' + e.message)); p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); }); return p; };
-  // ---- local ----
-  const a = await mk();
-  await a.goto(BASE, { waitUntil: 'networkidle0' });
-  await a.screenshot({ path: OUT + '/screenshot-menu.png' });
-  if (!process.env.SKIP_LOCAL) {
-    await a.click('#nSel button[data-n="4"]'); await a.click('#playLocal');
-    const hold = async (keys, ms) => { for (const k of keys) await a.keyboard.down(k); await new Promise(r => setTimeout(r, ms)); for (const k of keys) await a.keyboard.up(k); };
-    await hold(['KeyE', 'ArrowUp', 'KeyI'], 500);
-    await hold(['KeyQ', 'KeyM', 'KeyU', 'Numpad0'], 60); await hold(['KeyF', 'ArrowLeft', 'Numpad8'], 250); await hold(['KeyM', 'KeyQ'], 60);
-    await new Promise(r => setTimeout(r, 450));
-    const st = await a.evaluate(() => { const g = __tt.game; return { round: g.round, players: g.players.length, bullets: g.bullets.length, tanks: Object.values(g.tanks).map(t => [Math.round(t.x), Math.round(t.y), t.alive]), maze: [g.maze.cols, g.maze.rows] }; });
-    console.log('LOCAL', JSON.stringify(st)); console.log('shot..');
-    await a.screenshot({ path: OUT + '/screenshot.png' }); for (let i = 0; i < 6; i++) { await hold(['KeyQ', 'KeyM', 'KeyU', 'Numpad0'], 60); await hold(['KeyF', 'ArrowLeft'], 150); } await new Promise(r => setTimeout(r, 4500)); console.log('LOCAL after', JSON.stringify(await a.evaluate(() => ({ round: __tt.game.round, scores: __tt.game.players.map(p => p.score) }))));
-    // phone landscape touch layout
-    const ph = await browser.newPage(); await ph.emulate({ viewport: { width: 844, height: 390, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile' });
-    ph.on('pageerror', e => errs.push('phone pageerror: ' + e.message));
-    console.log('phone..'); await ph.goto(BASE, { waitUntil: 'networkidle0' }); await ph.tap('#playLocal'); await new Promise(r => setTimeout(r, 2800));
-    await ph.screenshot({ path: OUT + '/screenshot-phone.png' });
+  const mk = async (label) => { const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] }); const p = await b.newPage(); await p.setViewport({ width: 1100, height: 720 });
+    p.on('pageerror', e => errs.push(label + ' pageerror: ' + e.message)); p.on('console', m => m.type() === 'error' && errs.push(label + ' console: ' + m.text())); return { b, p }; };
+  const H = await mk('host'), G = await mk('guest');
+  const h = H.p, g = G.p;
+  const watch = p => p.evaluate(() => { window.__o = { weapons: {}, causes: {}, events: {}, rounds: new Set(), maxTanks: 0 };
+    const ws0 = WebSocket.prototype; const orig = ws0.addEventListener;
+    setInterval(() => { const n = __tt.net; if (!n || !n.snaps.length) return; const s = n.snaps.at(-1); __o.rounds.add(n.round); __o.maxTanks = Math.max(__o.maxTanks, s.tanks.size);
+      for (const t of s.tanks.values()) if (t.weapon) __o.weapons[t.weapon] = 1; for (const e of n.pendingEv) { __o.events[e.type] = (__o.events[e.type] || 0) + 1; if (e.type === 'die') __o.causes[e.cause] = (__o.causes[e.cause] || 0) + 1; } }, 30); });
+  await h.goto(BASE, { waitUntil: 'load' }); await watch(h);
+  await h.type('#name', 'Matej'); await h.click('#create');
+  await h.waitForFunction(() => __tt.net && __tt.net.code, { timeout: 20000 });
+  const link = await h.$eval('#link', e => e.value);
+  console.log('share link:', link);
+  await g.goto(link, { waitUntil: 'load' }); await watch(g);
+  await g.type('#name', 'Friend'); await g.click('#join');
+  await h.waitForFunction(() => __tt.net.players.length === 2, { timeout: 20000 });
+  for (let i = 0; i < 3; i++) { await h.click('#lbPlus'); await sleep(150); }
+  await h.click('#lvlRow button[data-l="hard"]'); await sleep(300);
+  await h.screenshot({ path: '/workspace/tank-trouble/screenshot-online-lobby.png' });
+  await h.click('#start');
+  await g.waitForFunction(() => __tt.net.snaps.length > 10, { timeout: 20000 });
+  // humans wander + shoot
+  const keys = ['ArrowUp', 'ArrowLeft', 'ArrowRight', 'Space'];
+  let reconnectDone = false, syncChecks = [];
+  for (let t = 0; t < SECS; t += 1) {
+    for (const p of [h, g]) { const k = keys[Math.floor(Math.random() * keys.length)]; await p.keyboard.down(k); setTimeout(() => p.keyboard.up(k).catch(() => {}), 300 + Math.random() * 500); }
+    await sleep(1000);
+    if (t % 15 === 5) { // sync check: same snapshot time on both clients
+      const a = await h.evaluate(() => { const s = __tt.net.snaps.at(-5); return s && { time: s.time, tk: [...s.tanks.values()].map(t => [t.id, t.x, t.y]) }; });
+      const b = await g.evaluate(time => { const s = __tt.net.snaps.find(s => s.time === time); return s && { time: s.time, tk: [...s.tanks.values()].map(t => [t.id, t.x, t.y]) }; }, a && a.time);
+      syncChecks.push(a && b ? JSON.stringify(a.tk) === JSON.stringify(b.tk) : 'n/a');
+    }
+    if (!reconnectDone && t === 40) { // drop the guest's socket, it should rejoin its slot
+      const before = await g.evaluate(() => __tt.net.you);
+      await g.evaluate(() => __tt.net.ws.close());
+      await sleep(4000);
+      const after = await g.evaluate(() => ({ you: __tt.net && __tt.net.you, open: __tt.net && __tt.net.ws.readyState === 1, mode: document.getElementById('menu').classList.contains('hidden') }));
+      console.log('reconnect: before id', before, 'after', JSON.stringify(after)); reconnectDone = true;
+    }
+    if (t === 60) await g.screenshot({ path: '/workspace/tank-trouble/screenshot-online.png' });
   }
-  console.log('online..');
-  if (!process.env.SKIP_ONLINE) {
-    const b2 = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] }); const b3 = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
-    const mk2 = async (br) => { const p = await br.newPage(); await p.setViewport({ width: 900, height: 650 }); p.on('pageerror', e => errs.push('pageerror: ' + e.message)); p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); }); return p; };
-    const h = await mk2(b2), g = await mk2(b3);
-    await h.goto(BASE, { waitUntil: 'networkidle0' });
-    console.log('h loaded'); await h.type('#name', 'Host'); console.log('typed'); await h.click('#create');
-    await h.waitForFunction(() => __tt.net && __tt.net.code, { timeout: 15000 });
-    const code = await h.evaluate(() => __tt.net.code);
-    await g.goto(BASE + '/?room=' + code, { waitUntil: 'networkidle0' });
-    console.log('g loaded', code); await g.type('#name', 'Guest'); await g.click('#join');
-    await h.waitForFunction(() => __tt.net.players.length === 2, { timeout: 15000 });
-    await h.screenshot({ path: OUT + '/screenshot-lobby.png' });
-    console.log('lobby ok'); await h.click('#start');
-    await g.waitForFunction(() => __tt.net.snaps.length > 5, { timeout: 15000 });
-    const pos = p => p.evaluate(() => { const s = __tt.net.snaps.at(-1); return { round: __tt.net.round, tanks: [...s.tanks.values()].map(t => [t.id, Math.round(t.x), Math.round(t.y), +t.a.toFixed(2)]) }; });
-    const before = await pos(g);
-    // guest drives forward + turns, host fires
-    await g.bringToFront(); await g.keyboard.down('ArrowUp'); await g.keyboard.down('ArrowRight');
-    await h.keyboard.down('Space');
-    await new Promise(r => setTimeout(r, 900));
-    await g.keyboard.up('ArrowUp'); await g.keyboard.up('ArrowRight'); await h.keyboard.up('Space');
-    await new Promise(r => setTimeout(r, 300));
-    const afterG = await pos(g), afterH = await pos(h);
-    const bulletsH = await h.evaluate(() => __tt.net.snaps.at(-1).bullets.size), bulletsG = await g.evaluate(() => __tt.net.snaps.at(-1).bullets.size);
-    const rate = await g.evaluate(async () => { const n0 = __tt.net.snaps.length ? __tt.net.snaps.at(-1).time : 0; let c = 0; const f = () => c++; const ws = __tt.net.ws; ws.addEventListener('message', f); await new Promise(r => setTimeout(r, 2000)); ws.removeEventListener('message', f); return c / 2; });
-    console.log('ONLINE code', code, '\n before(guest view)', JSON.stringify(before), '\n after guest view', JSON.stringify(afterG), '\n after host view ', JSON.stringify(afterH), '\n bullets host/guest', bulletsH, bulletsG, ' msgs/s', rate);
-    await g.screenshot({ path: OUT + '/screenshot-online.png' }); await b2.close(); await b3.close();
-  }
+  const res = async p => p.evaluate(() => ({ evTypes: Object.keys(__o.events), rounds: __o.rounds.size, maxTanks: __o.maxTanks, weaponsSeen: Object.keys(__o.weapons), killCauses: __o.causes, scores: __tt.net.players.map(p => p.name + ':' + p.score).join(' ') }));
+  console.log('host ', JSON.stringify(await res(h)));
+  console.log('guest', JSON.stringify(await res(g)));
+  console.log('sync checks (identical tank positions for same server tick):', syncChecks.join(','));
+  // leave handling
+  await g.evaluate(() => document.getElementById('quit').click());
+  await sleep(800);
+  console.log('after guest quit, host sees players:', await h.evaluate(() => __tt.net.players.map(p => p.name).join(',')));
   console.log('ERRORS', errs.length ? errs : 'none');
-  await browser.close(); if (!process.env.SKIP_ONLINE) { }
+  await H.b.close(); await G.b.close();
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

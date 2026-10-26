@@ -31,15 +31,12 @@ Open http://localhost:8090 in a browser.
 On a phone/tablet (landscape) two players share the screen: Red = left stick + FIRE, Green = right stick + FIRE.
 (Local mode also works by just opening `public/index.html` from disk.)
 
-**Online (each player on their own PC/phone)** — needs the server running:
-1. One player clicks **Create room** → gets a 4-letter code and a share link.
-2. Friends open the same address, enter the code (or open the link) and click **Join room**. 2–4 players.
-3. The host clicks **Start game**. Everyone drives with arrows (or WASD) and fires with Space / M; phones get an on-screen stick + FIRE.
-
-How friends reach your server:
-- Same Wi-Fi/LAN: they open `http://<your-computer-IP>:8090` (allow Node through the firewall).
-- Over the internet: expose the port with a tunnel, e.g. `cloudflared tunnel --url http://localhost:8090`
-  or `ssh -p 443 -R0:localhost:8090 free@a.pinggy.io`, and share the https URL it prints (WebSockets work through both).
+**Online (each player on their own PC/phone)** — needs the server (see *Server setup* below):
+1. Enter a name and click **Create room** → you get a 4-letter code and a share link (`?room=CODE`).
+2. Friends open the link (or enter the code) and click **Join room**.
+3. The host can add bots (− / +, skill Easy/Normal/Hard) — up to 8 tanks per room — and clicks **Start game**.
+4. Everyone drives with arrows (or WASD) and fires with Space / M; phones get an on-screen stick + FIRE.
+If a connection drops, the client reconnects automatically and gets its tank back (slot is kept for 30 s).
 
 Esc / ☰ opens the menu (the host can end the game and return everyone to the lobby).
 
@@ -72,3 +69,77 @@ Bots path-find through the maze (BFS) to the nearest enemy, fire when their aim 
 dodge incoming bullets and armed mines, grab crates and use each weapon (burst frags near enemies, laser/death ray only when the beam will hit, etc.),
 and skip shots that would bounce straight back at them. Skill changes reaction time, aim error, dodge rate and bounce shots.
 With 0 humans you can watch an all-bot match. On a phone, 1 human + bots works with the on-screen stick + FIRE.
+
+
+## Server setup (for the developer hosting online play)
+
+The server (`server.js`) is a small Node.js app: it serves the client from `public/` and runs every online room
+authoritatively (60 Hz simulation, 30 Hz state snapshots over WebSocket at path **`/ws`**; clients interpolate).
+It shares `public/game.js` (rules, weapons) and `public/bots.js` (AI) with the browser. No database, rooms live in memory.
+
+**Requirements:** Node.js **18+** (tested on 22), one dependency (`ws`). ~1 small CPU core is plenty for many rooms.
+
+```bash
+npm install          # or: npm ci --omit=dev
+npm start            # listens on $PORT, default 8090
+PORT=3000 npm start  # custom port
+curl localhost:8090/health   # {"ok":true,"rooms":0,...}
+```
+
+Open `http://<host>:8090/` — the same server also hosts a full copy of the client, so it is playable without GitHub Pages.
+
+### Behind a reverse proxy with TLS (wss://)
+
+The browser connects to `wss://<your-domain>/ws` when the server URL is `https://…`. The proxy must pass WebSocket upgrades:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name tank.example.com;
+    ssl_certificate     /etc/letsencrypt/live/tank.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tank.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;   # keep idle game sockets open (server also pings every 20 s)
+    }
+}
+```
+
+Run it permanently with systemd, pm2 (`pm2 start server.js --name tank-tussle`) or Docker.
+Any PaaS that supports WebSockets and sets `$PORT` works too (start command `npm start`).
+
+### Docker
+
+```bash
+docker build -t tank-tussle .
+docker run -d --restart unless-stopped -p 8090:8090 --name tank-tussle tank-tussle
+```
+
+### Pointing the GitHub Pages client at the server
+
+`docs/` is the static GitHub Pages site (same client, plus `tank-tussle.html`). Edit **`docs/config.js`**:
+
+```js
+window.TT_STATIC = true;
+window.TT_SERVER_URL = 'https://tank.example.com';   // https -> client uses wss://<host>/ws
+```
+
+Commit and push; Pages serves it. Alternatives without editing: open the page with `?server=https://tank.example.com`
+(share links created on such a page carry the `&server=` parameter), or type it into the *Server URL* field on the title screen.
+CORS: WebSockets accept any origin and `/health` sends `Access-Control-Allow-Origin: *`, so the Pages origin can connect.
+Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed content) — the server needs TLS (`wss://`).
+
+### Rebuilding the client copies
+
+`public/` is the source. After editing it run `python3 build.py` — it rebuilds the single-file `tank-tussle.html`
+(all JS inlined; works by double-click; online works there too if a server URL is set/typed) and syncs `docs/` (keeps `docs/config.js`).
+
+### Tests (optional, need Chrome + puppeteer-core)
+
+`tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect).
+`TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).
