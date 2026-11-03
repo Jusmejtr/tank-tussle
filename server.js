@@ -36,7 +36,7 @@ const humans = room => [...room.members.values()].filter(m => !m.bot);
 function freeColor(room) { const used = new Set([...room.members.values()].map(m => m.color)); let c = 0; while (used.has(c)) c++; return c; }
 
 function lobbyMsg(room) {
-  return { t: 'lobby', code: room.code, host: room.hostId, started: !!room.game, level: room.level, mode: room.mode, teamScore: room.game ? room.game.teamScore : [0, 0],
+  return { t: 'lobby', code: room.code, host: room.hostId, started: !!room.game, level: room.level, mode: room.mode, match: room.match, target: room.target, over: !!(room.game && room.game.phase === 'over'), teamScore: room.game ? room.game.teamScore : [0, 0],
     players: room.order.map(id => { const m = room.members.get(id); const p = room.game && room.game.players.find(p => p.id === id);
       return { id, name: m.name, color: m.color, team: m.team, score: p ? p.score : 0, bot: !!m.bot, online: m.bot || m.connected }; }) };
 }
@@ -63,10 +63,11 @@ function removeMember(room, id) {
 function startGame(room) {
   stopGame(room);
   const g = room.game = TT.createGame(); TT.setMode(g, room.mode);
+  TT.setMatch(g, room.match, { target: room.target });
   for (const id of room.order) { const m = room.members.get(id); TT.addPlayer(g, { id, name: m.name, colorIndex: m.color, team: m.team }); if (m.bot) m.brain = TTBots.newBrain(m.level); }
   TT.newRound(g); g.events.length = 0; debugArm(g);
   broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room));
-  let tick = 0, round = g.round;
+  let tick = 0, round = g.round, phase = g.phase;
   room.loop = setInterval(() => {
     const inputs = {};
     for (const [id, m] of room.members) {
@@ -77,8 +78,9 @@ function startGame(room) {
     for (const m of room.members.values()) if (m.seq) m.ticks++;
     const ev = g.events.splice(0);
     for (const e of ev) { const br = TT.botReaction(e, id => { const x = room.members.get(id); return !!(x && x.bot); }); if (br) setTimeout(() => react(room, br.id, br.r), 500); }
+    if (g.phase !== phase) { phase = g.phase; if (phase === 'over') broadcast(room, lobbyMsg(room)); } // deathmatch finished: final scores
     if (g.round !== round) { round = g.round; debugArm(g); broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room)); }
-    if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die')) {
+    if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die' || e.type === 'respawn' || e.type === 'over')) {
       const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round');
       s.ak = [...room.members.values()].filter(m => m.seq).map(m => [m.id, m.seq, m.ticks]); // last input seq + ticks it has been applied (client prediction)
       broadcast(room, s);
@@ -114,7 +116,7 @@ wss.on('connection', ws => {
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.t === 'input') { if (me) { const k = m.k || {}; me.input = { u: !!k.u, d: !!k.d, l: !!k.l, r: !!k.r, f: !!k.f }; if (m.s) { me.seq = m.s >>> 0; me.ticks = 0; } } return; }
-    if (m.t === 'create' && !room) { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal', mode: 'ffa' }; rooms.set(r.code, r); join(r, m.name); }
+    if (m.t === 'create' && !room) { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal', mode: 'ffa', match: 'rounds', target: TT.DM.TARGET }; rooms.set(r.code, r); join(r, m.name); }
     else if (m.t === 'join' && !room) { const r = rooms.get(String(m.code || '').toUpperCase().trim()); if (!r) return send(ws, { t: 'error', msg: 'Room not found.' }); join(r, m.name); }
     else if (m.t === 'rejoin' && !room) {
       const r = rooms.get(String(m.code || '').toUpperCase().trim()), mb = r && [...r.members.values()].find(x => !x.bot && x.token === m.token);
@@ -139,12 +141,18 @@ wss.on('connection', ws => {
       if (m.mode === 'teams' && room.mode !== 'teams') rebalance(room);
       room.mode = m.mode; broadcast(room, lobbyMsg(room));
     }
+    else if (m.t === 'setMatch' && isHost() && !room.game && (m.match === 'rounds' || m.match === 'dm')) { // Rounds / Deathmatch + kill target
+      room.match = m.match; if (TT.DM.TARGETS.includes(+m.target)) room.target = +m.target;
+      broadcast(room, lobbyMsg(room));
+    }
     else if (m.t === 'setTeam' && room && !room.game) { // anyone can switch themselves; the host can move anyone (e.g. bots)
       const id = m.id == null ? me.id : m.id >>> 0, x = room.members.get(id);
       if (x && (id === me.id || isHost())) { x.team = m.team === 0 || m.team === 1 ? m.team : 1 - x.team; broadcast(room, lobbyMsg(room)); }
     }
     else if (m.t === 'leave' && room) { const r = room, id = me.id; room = null; me = null; removeMember(r, id); }
     else if (m.t === 'react' && room && me) react(room, me.id, m.r);
+    else if (m.t === 'debugKill' && process.env.TT_DEBUG_DM && room && room.game) { const t = room.game.tanks[m.id >>> 0]; if (t) TT.kill(room.game, t, m.by >>> 0, 'b'); } // test hooks only
+    else if (m.t === 'debugClock' && process.env.TT_DEBUG_DM && room && room.game) room.game.dmLeft = +m.left || 0;
     else if (m.t === 'ping') send(ws, { t: 'pong', c: m.c });
   });
   ws.on('close', () => {

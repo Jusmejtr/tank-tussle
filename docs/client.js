@@ -50,6 +50,11 @@ function teamBadges() {
   return localTeams.map((t, i) => `<button class="team" data-i="${i}" title="Tap to switch team" style="border-color:${TEAM_COLORS[t]}"><span class="dot" style="background:${COLORS[i]}"></span>${i < nLocal ? 'P' + (i + 1) : 'Bot ' + (i - nLocal + 1)} <b style="color:${TEAM_COLORS[t]}">${TEAM_NAMES[t]}</b></button>`).join('');
 }
 const MAX_TANKS = 8;
+// Rounds (last tank standing) or Deathmatch (respawn after 3 s, first to N kills or 5 min). Saved on this device.
+let localMatch = 'rounds', dmTarget = TT.DM.TARGET;
+try { const v = JSON.parse(localStorage.getItem('tt-match')); if (v && (v.m === 'rounds' || v.m === 'dm')) localMatch = v.m; if (v && TT.DM.TARGETS.includes(v.k)) dmTarget = v.k; } catch {}
+const saveMatch = () => { try { localStorage.setItem('tt-match', JSON.stringify({ m: localMatch, k: dmTarget })); } catch {} };
+const fmtTime = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const STICK_MODES = ['tank', 'point'];
 let stickModes = (() => { try { const v = JSON.parse(localStorage.getItem('tt-stick')); if (Array.isArray(v)) return [0, 1].map(i => STICK_MODES.includes(v[i]) ? v[i] : 'tank'); } catch {} return ['tank', 'tank']; })();
 const saveStickModes = () => { try { localStorage.setItem('tt-stick', JSON.stringify(stickModes)); } catch {} };
@@ -67,6 +72,9 @@ function refreshMenu() {
   document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
   $('botN').textContent = nBots;
   document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.classList.toggle('sel', b.dataset.m === localMode));
+  document.querySelectorAll('#matchSel button[data-g]').forEach(b => b.classList.toggle('sel', b.dataset.g === localMatch));
+  document.querySelectorAll('#targetSel button[data-k]').forEach(b => b.classList.toggle('sel', +b.dataset.k === dmTarget));
+  show('targetSel', localMatch === 'dm');
   show('teamPick', localMode === 'teams');
   if (localMode === 'teams') { $('teamPick').innerHTML = '<span class="muted">Tap to switch team:</span> ' + teamBadges();
     $('teamPick').querySelectorAll('button.team').forEach(b => b.onclick = () => { localTeams[+b.dataset.i] ^= 1; refreshMenu(); }); }
@@ -78,6 +86,8 @@ function refreshMenu() {
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
 document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
 document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.onclick = () => { localMode = b.dataset.m; refreshMenu(); });
+document.querySelectorAll('#matchSel button[data-g]').forEach(b => b.onclick = () => { localMatch = b.dataset.g; saveMatch(); refreshMenu(); });
+document.querySelectorAll('#targetSel button[data-k]').forEach(b => b.onclick = () => { dmTarget = +b.dataset.k; saveMatch(); refreshMenu(); });
 $('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
 $('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
 // Touch stick mode per player (only the humans on this phone: P1, and P2 when 2+ players share it)
@@ -113,7 +123,7 @@ const qs = new URLSearchParams(location.search);
 $('name').value = localStorage.getItem('tt-name') || '';
 if (qs.get('room')) { $('code').value = qs.get('room').toUpperCase(); setTimeout(() => $('name').focus(), 50); }
 
-const inOverlay = () => !$('pause').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
+const inOverlay = () => !$('pause').classList.contains('hidden') || !$('over').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 let msgTimer;
 function flash(t, ms = 2500) { $('msg').textContent = t; show('msg', true); clearTimeout(msgTimer); msgTimer = setTimeout(() => show('msg', false), ms); }
@@ -125,7 +135,7 @@ let paused = false;
 let net = null;            // online state
 const particles = [];
 
-$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null);
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null, localMatch === 'dm' ? dmTarget : 0);
 $('create').onclick = () => connect({ t: 'create' });
 $('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
 $('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
@@ -142,10 +152,35 @@ document.querySelectorAll('#modeRow button[data-m]').forEach(b => b.onclick = ()
 $('switchTeam').onclick = () => net && net.send({ t: 'setTeam' });
 $('plist').addEventListener('click', e => { const b = e.target.closest('[data-team-id]'); if (b && net) net.send({ t: 'setTeam', id: +b.dataset.teamId }); });
 document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
+document.querySelectorAll('#matchRow button[data-g]').forEach(b => b.onclick = () => net && net.send({ t: 'setMatch', match: b.dataset.g, target: net.target }));
+$('targetBtn').onclick = () => { if (!net) return; const T = TT.DM.TARGETS; net.send({ t: 'setMatch', match: 'dm', target: T[(T.indexOf(net.target) + 1) % T.length] }); }; // 10 -> 15 -> 25 -> 10
+// Deathmatch end screen: local = play again / quit; online host = play again / lobby / leave; guests wait for the host
+$('again').onclick = () => { if (mode === 'local' && lastLocal) startLocal(...lastLocal); else if (net) net.send({ t: 'start' }); };
+$('overLobby').onclick = () => net && net.send({ t: 'stop' });
+$('overQuit').onclick = () => quit();
+let overShown = false;
+function showOver(players, teams, teamScore, win, target) {
+  overShown = true;
+  const name = id => { const p = players.find(p => p.id === id); return p ? p.name : '?'; };
+  let title;
+  if (teams) title = win.team < 0 ? "It's a draw!" : `${TEAM_NAMES[win.team]} team wins!`;
+  else title = !win.id ? "It's a draw!" : (mode === 'online' && net && win.id === net.you ? 'You win!' : `${esc(name(win.id))} wins!`);
+  $('overTitle').innerHTML = title;
+  $('overSub').textContent = win.reason === 'time' ? "Time's up" : `First to ${target} kills`;
+  const rows = players.slice().sort((a, b) => b.score - a.score);
+  $('overList').innerHTML = (teams ? [0, 1].map(t => `<li class="tm" style="color:${TEAM_COLORS[t]}"><b>${TEAM_NAMES[t]} team</b><b>${teamScore[t]}</b></li>`).join('') : '')
+    + rows.map(p => `<li><span class="dot" style="background:${COLORS[p.color]}"></span>${teams ? `<i style="color:${TEAM_COLORS[p.team || 0]}">${TEAM_NAMES[p.team || 0][0]}</i>` : ''}<span class="nm">${esc(p.name)}${mode === 'online' && net && p.id === net.you ? ' (you)' : ''}</span><b>${p.score}</b></li>`).join('');
+  const host = mode === 'local' || (net && net.you === net.host);
+  const row = (id, on) => $(id).parentElement.classList.toggle('hidden', !on);
+  row('again', host); row('overLobby', mode === 'online' && host); show('overWait', !host);
+  $('overQuit').textContent = mode === 'online' ? 'Leave room' : 'Quit to title';
+  show('pause', false); show('over', true); beep(660, 0.12, 'triangle', 0.06, 1.5); setTimeout(() => beep(990, 0.25, 'triangle', 0.06, 1.2), 140);
+}
+function hideOver() { overShown = false; show('over', false); }
 
 function togglePause(on) {
   if (on === undefined) on = $('pause').classList.contains('hidden');
-  if (!$('lobby').classList.contains('hidden')) return;
+  if (!$('lobby').classList.contains('hidden') || !$('over').classList.contains('hidden')) return;
   paused = on && mode === 'local';
   show('toLobbyRow', mode === 'online' && net && net.you === net.host);
   show('pause', on);
@@ -153,17 +188,19 @@ function togglePause(on) {
 function quit(keepErr) {
   if (net) { net.closed = true; try { net.send({ t: 'leave' }); net.ws.close(); } catch {} net = null; }
   mode = null; game = null; paused = false; particles.length = 0; bubbles.clear(); setupReact(null);
-  ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
+  ['pause', 'lobby', 'over', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false)); overShown = false;
   show('menu', true); refreshMenu();
   history.replaceState(null, '', location.pathname);
 }
 
 // ---------- local game ----------
-let brains = {};
+let brains = {}, lastLocal = null;
 // teams: null = free-for-all, true = auto-balanced teams, or an array of 0/1 per tank (humans first, then bots)
-function startLocal(n, bots = 0, level = 'normal', teams = null) {
-  audioInit();
+// dm: 0 = rounds, otherwise Deathmatch to that many kills (5-minute limit)
+function startLocal(n, bots = 0, level = 'normal', teams = null, dm = 0) {
+  audioInit(); lastLocal = [n, bots, level, Array.isArray(teams) ? teams.slice() : teams, dm]; hideOver();
   mode = 'local'; game = TT.createGame(); paused = false; brains = {};
+  if (dm) TT.setMatch(game, 'dm', { target: dm });
   if (teams) { TT.setMode(game, 'teams'); if (!Array.isArray(teams)) teams = TT.balanceTeams([...Array(n).fill({ bot: false }), ...Array(bots).fill({ bot: true })]); }
   const team = i => (teams ? teams[i] : undefined);
   for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i, team: team(i) });
@@ -175,6 +212,7 @@ function startLocal(n, bots = 0, level = 'normal', teams = null) {
   show('menu', false); show('menuBtn', true);
   setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
   bubbles.clear(); setupReact(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
+  if (dm) flash(`Deathmatch · first to ${game.dmTarget} kills`, 2500); else
   flash(teams ? 'Teams: Red vs Blue — last team standing scores!' : n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
@@ -191,6 +229,7 @@ function localTick(dt) {
     handleEvents(game.events.splice(0), id => game.tanks[id]);
     acc -= 1 / 60;
   }
+  if (game.phase === 'over' && !overShown) showOver(game.players, game.mode === 'teams', game.teamScore, game.winner, game.dmTarget);
 }
 
 // ---------- online ----------
@@ -245,23 +284,27 @@ function openSocket(me, firstMsg) {
       show('menu', false); show('menuBtn', true); if (!re) { setupTouch(isTouch ? 'online' : null); bubbles.clear(); setupReact('online'); } else flash('Reconnected!');
     } else if (m.t === 'lobby') {
       me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
-      if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
+      me.match = m.match === 'dm' ? 'dm' : 'rounds'; if (m.target) me.target = m.target;
+      if (m.started) for (const q of m.players) { const p = me.players.find(p => p.id === q.id); if (p) p.score = q.score; }
+      if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; me.win = null; hideOver(); }
       me.started = m.started; renderLobby();
     } else if (m.t === 'react') {
       if (Number.isInteger(m.r) && TT.REACTIONS[m.r]) showBubble(m.id, m.r);
     } else if (m.t === 'maze') {
-      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 };
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
     } else if (m.t === 's') {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8], respawn: t[9] || 0, prot: !!t[10] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
         crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
       for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
       if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
+      me.dm = m.dm ? { left: m.dm[0], target: m.dm[1] } : null; me.phase = m.phase;
+      if (m.phase === 'over' && m.win && !overShown) { me.win = m.win; showOver(me.players, me.mode === 'teams', me.teamScore || [0, 0], m.win, me.dm ? me.dm.target : me.target); }
     }
   };
 }
@@ -274,6 +317,8 @@ function renderLobby() {
     + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
   show('modeRow', true); document.querySelectorAll('#modeRow button[data-m]').forEach(b => { b.classList.toggle('sel', b.dataset.m === net.mode); b.disabled = !host; });
   show('switchTeam', teams);
+  show('matchRow', true); document.querySelectorAll('#matchRow button[data-g]').forEach(b => { b.classList.toggle('sel', b.dataset.g === net.match); b.disabled = !host; });
+  show('targetBtn', net.match === 'dm'); $('targetBtn').textContent = `${net.target || TT.DM.TARGET} kills`; $('targetBtn').disabled = !host;
   show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
   $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
   document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
@@ -337,7 +382,8 @@ function onlineView(dt) {
   const tanks = [];
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
-    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
+    const k = ta.alive === tb.alive ? t : 1; // a respawn jumps, it doesn't slide across the maze
+    tanks.push({ id, x: ta.x + (tb.x - ta.x) * k, y: ta.y + (tb.y - ta.y) * k, a: lerpAngle(ta.a, tb.a, k), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge, respawn: tb.respawn, prot: tb.prot });
   }
   const mine = net.pb && tanks.find(x => x.id === net.you);
   if (mine && mine.alive) {
@@ -350,7 +396,7 @@ function onlineView(dt) {
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
-    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0] };
+    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0], dm: net.dm, phase: b.phase };
 }
 
 // ---------- effects & sound ----------
@@ -380,6 +426,7 @@ function handleEvents(evs, tankOf) {
     else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
     else if (e.type === 'reveal') beep(1250, 0.12, 'square', 0.05, 0.9);
     else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
+    else if (e.type === 'respawn') beep(440, 0.12, 'sine', 0.05, 2);
     else if (e.type === 'burst') {
       boom();
       for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
@@ -539,7 +586,7 @@ function drawBubble(x, y, r, age) {
 }
 
 // ---------- rendering ----------
-let teamBar = false; // team mode: a team-score strip across the top
+let teamBar = false; // team mode / deathmatch: a score + timer strip across the top
 function layout(maze, n = 2) {
   const W = innerWidth, H = innerHeight, top = teamBar ? 34 : 0;
   const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
@@ -697,7 +744,7 @@ function render(view, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
-  teamBar = !!view.teams;
+  teamBar = !!(view.teams || view.dm);
   const teamOfId = id => { const p = view.players.find(p => p.id === id); return p && p.team != null ? p.team : 0; };
   const m = view.maze, L = layout(m, view.players.length), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
   const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
@@ -734,8 +781,11 @@ function render(view, dt) {
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
     }
+    const blink = t.prot && Math.sin(performance.now() / 55) > 0; // spawn protection: blinking, shots pass through
+    if (blink) { ctx.save(); ctx.globalAlpha = 0.3; }
     if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+    if (blink) ctx.restore();
   }
   // projectiles
   for (const b of view.bullets) drawProjectile(b, colorOf);
@@ -756,7 +806,7 @@ function render(view, dt) {
     ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
-  if (view.teams) drawTeamBar(view);
+  if (view.dm) drawDmBar(view); else if (view.teams) drawTeamBar(view);
   // HUD: scores + current weapon at the bottom
   const ps = view.players, n = ps.length, rows = L.rows, per = Math.ceil(n / rows), rowH = L.hud / rows;
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, per));
@@ -767,12 +817,16 @@ function render(view, dt) {
     const hy = innerHeight - L.bot - L.hud + rowH * (row + 0.5) - 4;
     const cx = innerWidth / 2 + (col - (inRow - 1) / 2) * slot - 14, sc = Math.min(1.3, rowH / 50, slot / 120);
     hudAt[p.id] = { x: cx - 26 * sc, y: hy - 16 * sc };
-    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null, wait = view.dm && t && !t.alive && t.respawn > 0;
     if (view.teams) teamRing(cx - 26 * sc, hy, TEAM_COLORS[p.team || 0], sc);
+    if (wait) ctx.globalAlpha = 0.3;
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
+    ctx.globalAlpha = 1;
+    if (wait) { ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.font = `bold ${Math.round(18 * sc)}px Verdana, sans-serif`; ctx.fillText(Math.ceil(t.respawn), cx - 26 * sc, hy + 1); }
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
     ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`;
-    if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
+    if (view.dm) { ctx.fillStyle = view.teams ? TEAM_COLORS[p.team || 0] : '#333'; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc); } // deathmatch: kills
+    else if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
     else ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + (view.teams ? 44 : 30) * sc, iy = hy - 6 * sc, bs = 20 * sc;
@@ -786,6 +840,7 @@ function render(view, dt) {
     const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
     ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
+  if (view.dm && view.phase !== 'over') drawRespawnBanner(view, L);
   // reaction bubbles: over the tank while alive, over the player's score while dead
   const now = performance.now();
   for (const [id, bb] of bubbles) {
@@ -811,10 +866,46 @@ function drawTeamBar(view) {
   ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + 12, y);
   ctx.restore();
 }
+// Deathmatch strip: time left in the middle; FFA shows the kill target, Teams the two team totals.
+function drawDmBar(view) {
+  const y = 20, cx = innerWidth / 2, ts = view.teamScore || [0, 0], dm = view.dm;
+  const bw = Math.max(130, Math.min(260, innerWidth - 216)), fs = Math.max(12, Math.round(18 * bw / 260));
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = `bold ${fs}px Verdana, sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillRect(cx - bw / 2, y - 15, bw, 30);
+  const low = dm.left <= 30 && view.phase !== 'over';
+  if (view.teams) {
+    ctx.textAlign = 'right'; ctx.fillStyle = TEAM_COLORS[0]; ctx.fillText(`RED ${ts[0]}`, cx - bw * 0.14, y);
+    ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + bw * 0.14, y);
+    ctx.textAlign = 'center'; ctx.fillStyle = low ? '#c22' : '#555'; ctx.font = `bold ${Math.round(fs * 0.8)}px Verdana, sans-serif`; ctx.fillText(fmtTime(dm.left), cx, y);
+  } else {
+    ctx.textAlign = 'center'; ctx.fillStyle = low ? '#c22' : '#444'; ctx.fillText(`⏱ ${fmtTime(dm.left)}`, cx - bw * 0.2, y);
+    ctx.fillStyle = '#666'; ctx.font = `bold ${Math.round(fs * 0.75)}px Verdana, sans-serif`; ctx.fillText(`first to ${dm.target}`, cx + bw * 0.22, y);
+  }
+  ctx.restore();
+}
+// "Respawning in 3…" for the humans on this screen who are waiting (you online; every local player sharing the device)
+function drawRespawnBanner(view, L) {
+  const mine = view.players.filter(p => (mode === 'online' ? p.you : !p.bot)).map(p => [p, view.tanks.find(t => t.id === p.id)]).filter(([, t]) => t && !t.alive && t.respawn > 0);
+  if (!mine.length) return;
+  const solo = mine.length === 1 && view.players.filter(p => (mode === 'online' ? p.you : !p.bot)).length === 1;
+  const parts = mine.map(([p, t]) => [solo ? `Respawning in ${Math.ceil(t.respawn)}…` : `${p.name} ${Math.ceil(t.respawn)}…`, COLORS[p.color]]);
+  const mh = view.maze.rows * C.CELL * L.s, y = L.oy + mh * 0.5, fs = Math.round(Math.max(16, Math.min(30, innerWidth / 22)));
+  ctx.save(); ctx.font = `bold ${fs}px Verdana, sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  const gap = fs, ws = parts.map(([s]) => ctx.measureText(s).width + fs * 1.1), total = ws.reduce((a, b) => a + b, 0) + gap * (parts.length - 1) + fs;
+  let x = innerWidth / 2 - total / 2;
+  ctx.fillStyle = 'rgba(40,40,40,.78)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y - fs, total, fs * 2, fs) : ctx.rect(x, y - fs, total, fs * 2); ctx.fill();
+  x += fs / 2;
+  parts.forEach(([s, col], i) => {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + fs * 0.35, y, fs * 0.32, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(s, x + fs * 0.9, y + 1); x += ws[i] + gap;
+  });
+  ctx.restore();
+}
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
-    teams: game.mode === 'teams', teamScore: game.teamScore,
+    teams: game.mode === 'teams', teamScore: game.teamScore, phase: game.phase,
+    dm: TT.isDM(game) ? { left: game.dmLeft, target: game.dmTarget } : null,
     legend: game.players.map((p, i, a, s = keySets(a.filter(x => !x.bot).length)[i]) => p.bot ? p.name : `${s.label.slice(0, 4).join(' ')} + ${s.label[4]}`) };
 }
 

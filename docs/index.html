@@ -41,8 +41,8 @@
   .row > input { flex: 1 1 120px; min-width: 0; }
   .seg > span:first-child { width: 84px; flex: 0 0 auto; }
   /* choice rows stay on one line: buttons shrink to share the space instead of wrapping */
-  #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: nowrap; }
-  #modeSel > button, #nSel > button, #lvlSel > button, #lvlRow > button { flex: 1 1 auto; min-width: 0; padding-left: 6px; padding-right: 6px; }
+  #modeSel, #matchSel, #targetSel, #nSel, #lvlSel, #lvlRow, #matchRow { flex-wrap: nowrap; }
+  #modeSel > button, #matchSel > button, #targetSel > button, #nSel > button, #lvlSel > button, #lvlRow > button, #matchRow > button { flex: 1 1 auto; min-width: 0; padding-left: 6px; padding-right: 6px; }
   .foot { margin-top: 12px; text-align: center; }
   /* tabs: only when both columns don't fit (narrow or short screens); otherwise side by side */
   .tabs { display: none; gap: 6px; margin: 8px 0 6px; }
@@ -73,6 +73,7 @@
   @media (max-height: 520px) and (min-width: 560px) {
     #lobby .panel { max-width: 760px !important; }
     .lobbygrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0 14px; align-items: start; }
+    #matchRow { flex-wrap: wrap; } .lobbygrid .lcol { min-width: 0; }
   }
   .sticksel { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1 1 auto; }
   .sticksel .sg { display: inline-flex; gap: 4px; align-items: center; }
@@ -130,7 +131,8 @@
     button { padding: 7px 8px; font-size: 14px; }
     .row { gap: 6px; }
     .seg > span:first-child { width: 100%; font-size: 13px; color: #555; margin-bottom: -2px; }
-    #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: wrap; }
+    #modeSel, #matchSel, #nSel, #lvlSel, #lvlRow, #matchRow { flex-wrap: wrap; }
+    #targetSel { flex-wrap: wrap; } #targetSel > .muted { flex: 0 0 auto; }
     .seg > button { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
     .seg > button.team { flex: 0 1 auto; }
     #botRow > b, .seg > b { flex: 0 0 auto; }
@@ -138,6 +140,15 @@
     #roomCode { font-size: 36px; letter-spacing: 6px; }
     #plist li { flex-wrap: wrap; }
   }
+  /* deathmatch end screen */
+  #overList { list-style: none; padding: 0; margin: 10px 0; text-align: left; }
+  #overList li { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: #fff; border: 1px solid #bbb; border-radius: 4px; margin: 4px 0; }
+  #overList li.tm { justify-content: space-between; background: #f8f8f8; }
+  #overList li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #overList li .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.4); flex: 0 0 auto; }
+  #overList li i { font-style: normal; font-weight: bold; font-size: 12px; }
+  #overTitle { font-size: 24px; text-transform: none; letter-spacing: 0; color: #333; margin-bottom: 2px; }
+  @media (max-height: 520px) { #overList { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; margin: 6px 0; } #overList li { padding: 3px 8px; font-size: 13px; } #overTitle { font-size: 20px; } }
   #rotate { position: fixed; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; text-align: center; background: rgba(207,207,207,.95); font-size: 18px; padding: 30px; }
 </style>
 </head>
@@ -159,6 +170,12 @@
         <h2>Same keyboard</h2>
         <div class="row seg" id="modeSel"><span>Mode:</span>
           <button data-m="ffa" class="sel">Free-for-all</button><button data-m="teams">Teams</button>
+        </div>
+        <div class="row seg" id="matchSel"><span>Game:</span>
+          <button data-g="rounds" class="sel" title="Last tank (or team) standing scores a point">Rounds</button><button data-g="dm" title="Respawn after 3 s · most kills wins">Deathmatch</button>
+        </div>
+        <div class="row seg hidden" id="targetSel"><span>Win at:</span>
+          <button data-k="10">10</button><button data-k="15" class="sel">15</button><button data-k="25">25</button><span class="muted">kills · 5 min</span>
         </div>
         <div class="row teampick hidden" id="teamPick"></div>
         <div class="row seg" id="nSel"><span>Players:</span>
@@ -185,7 +202,7 @@
         <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire, <kbd>1</kbd>–<kbd>6</kbd> = reactions 😂😡😭😎💀👍 (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
+    <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Deathmatch: respawn after 3 s, first to 10/15/25 kills or most kills after 5 min. Pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
@@ -198,12 +215,24 @@
     <div class="row seg hidden" id="modeRow"><span>Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
     <ul id="plist"></ul>
     </div><div class="lcol">
+    <div class="row seg hidden" id="matchRow"><span>Game:</span><button data-g="rounds">Rounds</button><button data-g="dm">Deathmatch</button><button id="targetBtn" class="hidden" title="Kills to win (5 min limit) — tap to change">15 kills</button></div>
     <div class="row seg hidden" id="botRow"><span>Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted help">(max 8 tanks)</span></div>
     <div class="row seg hidden" id="lvlRow"><span>Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
-    <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
-    <div class="row"><button id="leave">Leave room</button></div>
+    <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted" style="flex:1">Waiting for the host to start…</span><button id="leave">Leave</button></div>
     <div class="muted help">Controls: arrows + Space/M · 1–6 react · on phone: on-screen stick + FIRE</div>
     </div></div>
+  </div>
+</div>
+
+<div id="over" class="overlay hidden">
+  <div class="panel" style="max-width:380px;text-align:center">
+    <h2 id="overTitle">Game over</h2>
+    <div class="muted" id="overSub"></div>
+    <ol id="overList"></ol>
+    <div class="row"><button class="go" id="again" style="flex:1">Play again ▶</button></div>
+    <div class="row"><button id="overLobby" style="flex:1">Back to lobby</button></div>
+    <div class="row"><button id="overQuit" style="flex:1">Quit to title</button></div>
+    <div class="muted hidden" id="overWait">Waiting for the host to start again…</div>
   </div>
 </div>
 

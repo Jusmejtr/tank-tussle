@@ -35,6 +35,11 @@
     return null;
   }
 
+  // Deathmatch: no rounds. A dead tank respawns after RESPAWN s at a safe spot, blinking (can't be hit) for PROTECT s
+  // (firing ends it early). Score = kills; a self-kill or a team kill costs 1. The match ends at the kill target
+  // (a player's kills, or a team's total in Teams) or when the time runs out, whichever comes first.
+  const DM = { RESPAWN: 3, PROTECT: 1.5, TARGETS: [10, 15, 25], TARGET: 15, TIME: 300 };
+
   const rand = (a, b) => a + Math.random() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b + 1));
 
@@ -158,8 +163,16 @@
 
   // ---------- Game ----------
   function createGame() {
-    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0] };
+    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0],
+      match: 'rounds', dmTarget: DM.TARGET, dmTime: DM.TIME, dmLeft: DM.TIME, winner: null };
   }
+  // match = 'rounds' (last tank / team standing scores) or 'dm' (deathmatch). opts: { target (kills), time (s) }
+  function setMatch(g, match, opts = {}) {
+    g.match = match === 'dm' ? 'dm' : 'rounds';
+    g.dmTarget = DM.TARGETS.includes(+opts.target) ? +opts.target : (opts.anyTarget && +opts.target > 0 ? +opts.target : DM.TARGET);
+    g.dmTime = +opts.time > 0 ? +opts.time : DM.TIME; g.dmLeft = g.dmTime; g.winner = null;
+  }
+  const isDM = g => g.match === 'dm';
   // ---------- teams ----------
   const teamOf = (g, id) => { const p = g.players.find(p => p.id === id); return p ? p.team : -1; };
   // true when a and b are different tanks on the same team (only in team mode)
@@ -219,13 +232,64 @@
         if (!best) best = [0, 0];
       }
       chosen.push(best);
-      g.tanks[p.id] = {
-        id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
-        a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
-        weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0, rcId: 0, firing: false, lock: 0,
-      };
+      g.tanks[p.id] = newTank(p.id, best);
+      if (isDM(g)) g.tanks[p.id].prot = DM.PROTECT;
     }
     g.events.push({ type: 'round', round: g.round });
+  }
+
+  function newTank(id, cell) {
+    return { id, x: (cell[0] + 0.5) * C.CELL, y: (cell[1] + 0.5) * C.CELL,
+      a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
+      weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0, rcId: 0, firing: false, lock: 0, respawn: 0, prot: 0 };
+  }
+  // Deathmatch respawn spot: the cell farthest from enemy tanks, with nothing dangerous (bullets, mines, beams) nearby
+  // and never on top of another tank. A little randomness among equally good cells.
+  function safeSpawnCell(g, id) {
+    const { cols, rows } = g.maze, CS = C.CELL;
+    const others = Object.values(g.tanks).filter(o => o.alive && o.id !== id);
+    let best = [0, 0], bestS = -1e9;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = (c + 0.5) * CS, y = (r + 0.5) * CS;
+      let s = 0, near = 1e9;
+      for (const o of others) {
+        const d = Math.hypot(o.x - x, o.y - y);
+        if (d < CS) s -= 1e6;                                   // occupied
+        if (!sameTeam(g, id, o.id)) near = Math.min(near, d);  // enemies: farther is better
+      }
+      s += Math.min(near, 12 * CS);
+      for (const b of g.bullets) { const d = Math.hypot(b.x - x, b.y - y); if (d < 2.5 * CS) s -= (2.5 * CS - d) * 40; }
+      for (const m of g.mines) if (Math.hypot(m.x - x, m.y - y) < 1.5 * CS) s -= 1e5;
+      for (const bm of g.beams) if (bm.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < CS)) s -= 1e5;
+      s += Math.random() * 0.4 * CS;
+      if (s > bestS) { bestS = s; best = [c, r]; }
+    }
+    return best;
+  }
+  function respawn(g, id) {
+    const t = newTank(id, safeSpawnCell(g, id)); t.prot = DM.PROTECT;
+    g.tanks[id] = t; g.events.push({ type: 'respawn', id, x: t.x, y: t.y });
+    return t;
+  }
+  // Deathmatch scoring + match end. by = killer id (the projectile owner).
+  function dmScore(g, victim, by) {
+    const pv = g.players.find(p => p.id === victim), pk = g.players.find(p => p.id === by);
+    const bad = by === victim || sameTeam(g, victim, by), who = bad ? (by === victim ? pv : pk) : pk;
+    if (!who) return;
+    const d = bad ? -1 : 1; who.score += d;
+    if (g.mode === 'teams' && (who.team === 0 || who.team === 1)) g.teamScore[who.team] += d;
+  }
+  function dmWinner(g, reason) {
+    if (g.mode === 'teams') { const [a, b] = g.teamScore; return { reason, team: a === b ? -1 : a > b ? 0 : 1 }; }
+    const top = Math.max(...g.players.map(p => p.score)), lead = g.players.filter(p => p.score === top);
+    return { reason, id: lead.length === 1 ? lead[0].id : 0 };
+  }
+  function dmCheckEnd(g) {
+    const reached = g.mode === 'teams' ? Math.max(...g.teamScore) >= g.dmTarget : g.players.some(p => p.score >= g.dmTarget);
+    if (reached || g.dmLeft <= 0) {
+      g.phase = 'over'; g.dmLeft = Math.max(0, g.dmLeft); g.winner = dmWinner(g, reached ? 'target' : 'time');
+      g.events.push(Object.assign({ type: 'over' }, g.winner));
+    }
   }
 
   function spawnCrate(g, type, x, y) {
@@ -261,10 +325,11 @@
   }
 
   function kill(g, t, by, cause) {
-    if (!t.alive) return false;
+    if (!t.alive || t.prot > 0 || g.phase === 'over') return false;
     if (!FRIENDLY_FIRE && sameTeam(g, t.id, by)) return false;
     t.alive = false;
     g.events.push({ type: 'die', id: t.id, x: t.x, y: t.y, by, cause });
+    if (isDM(g)) { t.respawn = DM.RESPAWN; dmScore(g, t.id, by); }
     return true;
   }
   function spawnProjectile(g, t, kind, speed, extra) {
@@ -429,6 +494,14 @@
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
+    if (g.phase === 'over') return; // deathmatch finished: frozen on the result until a new game starts
+    if (isDM(g)) {
+      for (const p of g.players) if (!g.tanks[p.id]) g.tanks[p.id] = Object.assign(newTank(p.id, [0, 0]), { alive: false, respawn: 1 }); // joined mid-match
+      for (const t of Object.values(g.tanks)) {
+        if (!t.alive && t.respawn > 0) { t.respawn -= dt; if (t.respawn <= 0) respawn(g, t.id); }
+        else if (t.prot > 0) t.prot = Math.max(0, t.prot - dt);
+      }
+    }
     const tanks = Object.values(g.tanks);
     for (const t of tanks) {
       if (!t.alive) continue;
@@ -442,6 +515,7 @@
       moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;
       const pressed = k.f && !t.fireHeld;
+      if (pressed && t.prot > 0) t.prot = 0; // shooting ends spawn protection
       if (t.weapon) useWeapon(g, t, k, pressed, dt);
       else if (pressed) fire(g, t);
       t.fireHeld = !!k.f;
@@ -485,7 +559,7 @@
       b.a = Math.atan2(b.vy, b.vx);
       let hit = false;
       for (const t of tanks) {
-        if (!t.alive) continue;
+        if (!t.alive || t.prot > 0) continue; // spawn-protected tanks: shots pass through
         if (t.id === b.owner && b.age < (b.grace != null ? b.grace : C.OWNER_GRACE)) continue;
         const dx = t.x - b.x, dy = t.y - b.y, r = C.TANK_R + b.r - 1;
         if (dx * dx + dy * dy < r * r && (FRIENDLY_FIRE || !sameTeam(g, t.id, b.owner))) { kill(g, t, b.owner, b.kind); hit = true; break; }
@@ -514,6 +588,8 @@
     // crates
     g.crateTimer -= dt;
     if (g.crateTimer <= 0 && g.phase === 'play') { if (g.crates.length < W.MAX_CRATES) spawnCrate(g); g.crateTimer = rand(W.CRATE_MIN, W.CRATE_MAX); }
+    // deathmatch: no rounds, just the clock and the kill target
+    if (isDM(g)) { g.dmLeft -= dt; dmCheckEnd(g); return; }
     // round flow
     const alive = tanks.filter(t => t.alive);
     if (g.phase === 'play') {
@@ -550,15 +626,16 @@
   function snapshot(g) {
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
-      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0]),
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0, !t.alive && t.respawn > 0 ? Math.ceil(t.respawn * 10) / 10 : 0, t.prot > 0 ? 1 : 0]),
       b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
       sc: g.players.map(p => [p.id, p.score, p.team]),
       md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,
+      dm: isDM(g) ? [Math.max(0, Math.round(g.dmLeft * 10) / 10), g.dmTarget] : 0, win: g.winner,
     };
   }
 
-  return { C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });

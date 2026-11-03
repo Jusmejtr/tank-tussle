@@ -39,8 +39,8 @@
   .row > input { flex: 1 1 120px; min-width: 0; }
   .seg > span:first-child { width: 84px; flex: 0 0 auto; }
   /* choice rows stay on one line: buttons shrink to share the space instead of wrapping */
-  #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: nowrap; }
-  #modeSel > button, #nSel > button, #lvlSel > button, #lvlRow > button { flex: 1 1 auto; min-width: 0; padding-left: 6px; padding-right: 6px; }
+  #modeSel, #matchSel, #targetSel, #nSel, #lvlSel, #lvlRow, #matchRow { flex-wrap: nowrap; }
+  #modeSel > button, #matchSel > button, #targetSel > button, #nSel > button, #lvlSel > button, #lvlRow > button, #matchRow > button { flex: 1 1 auto; min-width: 0; padding-left: 6px; padding-right: 6px; }
   .foot { margin-top: 12px; text-align: center; }
   /* tabs: only when both columns don't fit (narrow or short screens); otherwise side by side */
   .tabs { display: none; gap: 6px; margin: 8px 0 6px; }
@@ -71,6 +71,7 @@
   @media (max-height: 520px) and (min-width: 560px) {
     #lobby .panel { max-width: 760px !important; }
     .lobbygrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0 14px; align-items: start; }
+    #matchRow { flex-wrap: wrap; } .lobbygrid .lcol { min-width: 0; }
   }
   .sticksel { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1 1 auto; }
   .sticksel .sg { display: inline-flex; gap: 4px; align-items: center; }
@@ -128,7 +129,8 @@
     button { padding: 7px 8px; font-size: 14px; }
     .row { gap: 6px; }
     .seg > span:first-child { width: 100%; font-size: 13px; color: #555; margin-bottom: -2px; }
-    #modeSel, #nSel, #lvlSel, #lvlRow { flex-wrap: wrap; }
+    #modeSel, #matchSel, #nSel, #lvlSel, #lvlRow, #matchRow { flex-wrap: wrap; }
+    #targetSel { flex-wrap: wrap; } #targetSel > .muted { flex: 0 0 auto; }
     .seg > button { flex: 1 1 0; min-width: 0; padding-left: 4px; padding-right: 4px; }
     .seg > button.team { flex: 0 1 auto; }
     #botRow > b, .seg > b { flex: 0 0 auto; }
@@ -136,6 +138,15 @@
     #roomCode { font-size: 36px; letter-spacing: 6px; }
     #plist li { flex-wrap: wrap; }
   }
+  /* deathmatch end screen */
+  #overList { list-style: none; padding: 0; margin: 10px 0; text-align: left; }
+  #overList li { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: #fff; border: 1px solid #bbb; border-radius: 4px; margin: 4px 0; }
+  #overList li.tm { justify-content: space-between; background: #f8f8f8; }
+  #overList li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #overList li .dot { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.4); flex: 0 0 auto; }
+  #overList li i { font-style: normal; font-weight: bold; font-size: 12px; }
+  #overTitle { font-size: 24px; text-transform: none; letter-spacing: 0; color: #333; margin-bottom: 2px; }
+  @media (max-height: 520px) { #overList { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; margin: 6px 0; } #overList li { padding: 3px 8px; font-size: 13px; } #overTitle { font-size: 20px; } }
   #rotate { position: fixed; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; text-align: center; background: rgba(207,207,207,.95); font-size: 18px; padding: 30px; }
 </style>
 </head>
@@ -157,6 +168,12 @@
         <h2>Same keyboard</h2>
         <div class="row seg" id="modeSel"><span>Mode:</span>
           <button data-m="ffa" class="sel">Free-for-all</button><button data-m="teams">Teams</button>
+        </div>
+        <div class="row seg" id="matchSel"><span>Game:</span>
+          <button data-g="rounds" class="sel" title="Last tank (or team) standing scores a point">Rounds</button><button data-g="dm" title="Respawn after 3 s · most kills wins">Deathmatch</button>
+        </div>
+        <div class="row seg hidden" id="targetSel"><span>Win at:</span>
+          <button data-k="10">10</button><button data-k="15" class="sel">15</button><button data-k="25">25</button><span class="muted">kills · 5 min</span>
         </div>
         <div class="row teampick hidden" id="teamPick"></div>
         <div class="row seg" id="nSel"><span>Players:</span>
@@ -183,7 +200,7 @@
         <div class="keys help">Online: everyone uses <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> + <kbd>Space</kbd> or <kbd>M</kbd> to fire, <kbd>1</kbd>–<kbd>6</kbd> = reactions 😂😡😭😎💀👍 (or on-screen controls on a phone). Up to 8 tanks per room (the host can add bots).</div>
       </div>
     </div>
-    <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
+    <div class="muted help foot">Bullets bounce off walls for 10 s — yes, you can shoot yourself. Drive over crates for weapons: Gatling gun, Laser, Frag bomb (fire again to burst), Death ray, RC missile (steer it), Homing missile, Booby trap, Shotgun. Last tank standing scores a point — or pick Deathmatch: respawn after 3 s, first to 10/15/25 kills or most kills after 5 min. Pick Teams: Red vs Blue, last team standing scores (friendly fire is on!). <kbd>Esc</kbd> = menu</div>
   </div>
 </div>
 
@@ -196,12 +213,24 @@
     <div class="row seg hidden" id="modeRow"><span>Mode:</span><button data-m="ffa">Free-for-all</button><button data-m="teams">Teams</button><button id="switchTeam" class="hidden">Switch my team</button></div>
     <ul id="plist"></ul>
     </div><div class="lcol">
+    <div class="row seg hidden" id="matchRow"><span>Game:</span><button data-g="rounds">Rounds</button><button data-g="dm">Deathmatch</button><button id="targetBtn" class="hidden" title="Kills to win (5 min limit) — tap to change">15 kills</button></div>
     <div class="row seg hidden" id="botRow"><span>Bots:</span><button id="lbMinus">−</button><b id="lobbyBots" style="min-width:22px;text-align:center">0</b><button id="lbPlus">+</button><span class="muted help">(max 8 tanks)</span></div>
     <div class="row seg hidden" id="lvlRow"><span>Bot skill:</span><button data-l="easy">Easy</button><button data-l="normal">Normal</button><button data-l="hard">Hard</button></div>
-    <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted">Waiting for the host to start…</span></div>
-    <div class="row"><button id="leave">Leave room</button></div>
+    <div class="row"><button class="go hidden" id="start" style="flex:1">Start game ▶</button><span id="waitHost" class="muted" style="flex:1">Waiting for the host to start…</span><button id="leave">Leave</button></div>
     <div class="muted help">Controls: arrows + Space/M · 1–6 react · on phone: on-screen stick + FIRE</div>
     </div></div>
+  </div>
+</div>
+
+<div id="over" class="overlay hidden">
+  <div class="panel" style="max-width:380px;text-align:center">
+    <h2 id="overTitle">Game over</h2>
+    <div class="muted" id="overSub"></div>
+    <ol id="overList"></ol>
+    <div class="row"><button class="go" id="again" style="flex:1">Play again ▶</button></div>
+    <div class="row"><button id="overLobby" style="flex:1">Back to lobby</button></div>
+    <div class="row"><button id="overQuit" style="flex:1">Quit to title</button></div>
+    <div class="muted hidden" id="overWait">Waiting for the host to start again…</div>
   </div>
 </div>
 
@@ -258,6 +287,11 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     if (isBot(ev.id) && rnd() < 0.2) return { id: ev.id, r: rnd() < 0.5 ? 2 : (ev.by === ev.id ? 4 : 1) };
     return null;
   }
+
+  // Deathmatch: no rounds. A dead tank respawns after RESPAWN s at a safe spot, blinking (can't be hit) for PROTECT s
+  // (firing ends it early). Score = kills; a self-kill or a team kill costs 1. The match ends at the kill target
+  // (a player's kills, or a team's total in Teams) or when the time runs out, whichever comes first.
+  const DM = { RESPAWN: 3, PROTECT: 1.5, TARGETS: [10, 15, 25], TARGET: 15, TIME: 300 };
 
   const rand = (a, b) => a + Math.random() * (b - a);
   const randi = (a, b) => Math.floor(rand(a, b + 1));
@@ -382,8 +416,16 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
 
   // ---------- Game ----------
   function createGame() {
-    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0] };
+    return { players: [], tanks: {}, bullets: [], crates: [], mines: [], beams: [], nextId: 1, round: 0, phase: 'play', endTimer: 0, time: 0, crateTimer: 0, maze: null, rects: [], events: [], mode: 'ffa', teamScore: [0, 0],
+      match: 'rounds', dmTarget: DM.TARGET, dmTime: DM.TIME, dmLeft: DM.TIME, winner: null };
   }
+  // match = 'rounds' (last tank / team standing scores) or 'dm' (deathmatch). opts: { target (kills), time (s) }
+  function setMatch(g, match, opts = {}) {
+    g.match = match === 'dm' ? 'dm' : 'rounds';
+    g.dmTarget = DM.TARGETS.includes(+opts.target) ? +opts.target : (opts.anyTarget && +opts.target > 0 ? +opts.target : DM.TARGET);
+    g.dmTime = +opts.time > 0 ? +opts.time : DM.TIME; g.dmLeft = g.dmTime; g.winner = null;
+  }
+  const isDM = g => g.match === 'dm';
   // ---------- teams ----------
   const teamOf = (g, id) => { const p = g.players.find(p => p.id === id); return p ? p.team : -1; };
   // true when a and b are different tanks on the same team (only in team mode)
@@ -443,13 +485,64 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         if (!best) best = [0, 0];
       }
       chosen.push(best);
-      g.tanks[p.id] = {
-        id: p.id, x: (best[0] + 0.5) * C.CELL, y: (best[1] + 0.5) * C.CELL,
-        a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
-        weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0, rcId: 0, firing: false, lock: 0,
-      };
+      g.tanks[p.id] = newTank(p.id, best);
+      if (isDM(g)) g.tanks[p.id].prot = DM.PROTECT;
     }
     g.events.push({ type: 'round', round: g.round });
+  }
+
+  function newTank(id, cell) {
+    return { id, x: (cell[0] + 0.5) * C.CELL, y: (cell[1] + 0.5) * C.CELL,
+      a: randi(0, 3) * Math.PI / 2 + rand(-0.3, 0.3), alive: true, fireHeld: false,
+      weapon: null, ammo: 0, cool: 0, charge: 0, bombId: 0, rcId: 0, firing: false, lock: 0, respawn: 0, prot: 0 };
+  }
+  // Deathmatch respawn spot: the cell farthest from enemy tanks, with nothing dangerous (bullets, mines, beams) nearby
+  // and never on top of another tank. A little randomness among equally good cells.
+  function safeSpawnCell(g, id) {
+    const { cols, rows } = g.maze, CS = C.CELL;
+    const others = Object.values(g.tanks).filter(o => o.alive && o.id !== id);
+    let best = [0, 0], bestS = -1e9;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = (c + 0.5) * CS, y = (r + 0.5) * CS;
+      let s = 0, near = 1e9;
+      for (const o of others) {
+        const d = Math.hypot(o.x - x, o.y - y);
+        if (d < CS) s -= 1e6;                                   // occupied
+        if (!sameTeam(g, id, o.id)) near = Math.min(near, d);  // enemies: farther is better
+      }
+      s += Math.min(near, 12 * CS);
+      for (const b of g.bullets) { const d = Math.hypot(b.x - x, b.y - y); if (d < 2.5 * CS) s -= (2.5 * CS - d) * 40; }
+      for (const m of g.mines) if (Math.hypot(m.x - x, m.y - y) < 1.5 * CS) s -= 1e5;
+      for (const bm of g.beams) if (bm.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < CS)) s -= 1e5;
+      s += Math.random() * 0.4 * CS;
+      if (s > bestS) { bestS = s; best = [c, r]; }
+    }
+    return best;
+  }
+  function respawn(g, id) {
+    const t = newTank(id, safeSpawnCell(g, id)); t.prot = DM.PROTECT;
+    g.tanks[id] = t; g.events.push({ type: 'respawn', id, x: t.x, y: t.y });
+    return t;
+  }
+  // Deathmatch scoring + match end. by = killer id (the projectile owner).
+  function dmScore(g, victim, by) {
+    const pv = g.players.find(p => p.id === victim), pk = g.players.find(p => p.id === by);
+    const bad = by === victim || sameTeam(g, victim, by), who = bad ? (by === victim ? pv : pk) : pk;
+    if (!who) return;
+    const d = bad ? -1 : 1; who.score += d;
+    if (g.mode === 'teams' && (who.team === 0 || who.team === 1)) g.teamScore[who.team] += d;
+  }
+  function dmWinner(g, reason) {
+    if (g.mode === 'teams') { const [a, b] = g.teamScore; return { reason, team: a === b ? -1 : a > b ? 0 : 1 }; }
+    const top = Math.max(...g.players.map(p => p.score)), lead = g.players.filter(p => p.score === top);
+    return { reason, id: lead.length === 1 ? lead[0].id : 0 };
+  }
+  function dmCheckEnd(g) {
+    const reached = g.mode === 'teams' ? Math.max(...g.teamScore) >= g.dmTarget : g.players.some(p => p.score >= g.dmTarget);
+    if (reached || g.dmLeft <= 0) {
+      g.phase = 'over'; g.dmLeft = Math.max(0, g.dmLeft); g.winner = dmWinner(g, reached ? 'target' : 'time');
+      g.events.push(Object.assign({ type: 'over' }, g.winner));
+    }
   }
 
   function spawnCrate(g, type, x, y) {
@@ -485,10 +578,11 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   }
 
   function kill(g, t, by, cause) {
-    if (!t.alive) return false;
+    if (!t.alive || t.prot > 0 || g.phase === 'over') return false;
     if (!FRIENDLY_FIRE && sameTeam(g, t.id, by)) return false;
     t.alive = false;
     g.events.push({ type: 'die', id: t.id, x: t.x, y: t.y, by, cause });
+    if (isDM(g)) { t.respawn = DM.RESPAWN; dmScore(g, t.id, by); }
     return true;
   }
   function spawnProjectile(g, t, kind, speed, extra) {
@@ -653,6 +747,14 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   // inputs: { [playerId]: {u,d,l,r,f} }
   function step(g, inputs, dt) {
     g.time += dt;
+    if (g.phase === 'over') return; // deathmatch finished: frozen on the result until a new game starts
+    if (isDM(g)) {
+      for (const p of g.players) if (!g.tanks[p.id]) g.tanks[p.id] = Object.assign(newTank(p.id, [0, 0]), { alive: false, respawn: 1 }); // joined mid-match
+      for (const t of Object.values(g.tanks)) {
+        if (!t.alive && t.respawn > 0) { t.respawn -= dt; if (t.respawn <= 0) respawn(g, t.id); }
+        else if (t.prot > 0) t.prot = Math.max(0, t.prot - dt);
+      }
+    }
     const tanks = Object.values(g.tanks);
     for (const t of tanks) {
       if (!t.alive) continue;
@@ -666,6 +768,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;
       const pressed = k.f && !t.fireHeld;
+      if (pressed && t.prot > 0) t.prot = 0; // shooting ends spawn protection
       if (t.weapon) useWeapon(g, t, k, pressed, dt);
       else if (pressed) fire(g, t);
       t.fireHeld = !!k.f;
@@ -709,7 +812,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
       b.a = Math.atan2(b.vy, b.vx);
       let hit = false;
       for (const t of tanks) {
-        if (!t.alive) continue;
+        if (!t.alive || t.prot > 0) continue; // spawn-protected tanks: shots pass through
         if (t.id === b.owner && b.age < (b.grace != null ? b.grace : C.OWNER_GRACE)) continue;
         const dx = t.x - b.x, dy = t.y - b.y, r = C.TANK_R + b.r - 1;
         if (dx * dx + dy * dy < r * r && (FRIENDLY_FIRE || !sameTeam(g, t.id, b.owner))) { kill(g, t, b.owner, b.kind); hit = true; break; }
@@ -738,6 +841,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     // crates
     g.crateTimer -= dt;
     if (g.crateTimer <= 0 && g.phase === 'play') { if (g.crates.length < W.MAX_CRATES) spawnCrate(g); g.crateTimer = rand(W.CRATE_MIN, W.CRATE_MAX); }
+    // deathmatch: no rounds, just the clock and the kill target
+    if (isDM(g)) { g.dmLeft -= dt; dmCheckEnd(g); return; }
     // round flow
     const alive = tanks.filter(t => t.alive);
     if (g.phase === 'play') {
@@ -774,17 +879,18 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   function snapshot(g) {
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
-      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0]),
+      tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0, !t.alive && t.respawn > 0 ? Math.ceil(t.respawn * 10) / 10 : 0, t.prot > 0 ? 1 : 0]),
       b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
       mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
       sc: g.players.map(p => [p.id, p.score, p.team]),
       md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,
+      dm: isDM(g) ? [Math.max(0, Math.round(g.dmLeft * 10) / 10), g.dmTarget] : 0, win: g.winner,
     };
   }
 
-  return { C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -1038,6 +1144,11 @@ function teamBadges() {
   return localTeams.map((t, i) => `<button class="team" data-i="${i}" title="Tap to switch team" style="border-color:${TEAM_COLORS[t]}"><span class="dot" style="background:${COLORS[i]}"></span>${i < nLocal ? 'P' + (i + 1) : 'Bot ' + (i - nLocal + 1)} <b style="color:${TEAM_COLORS[t]}">${TEAM_NAMES[t]}</b></button>`).join('');
 }
 const MAX_TANKS = 8;
+// Rounds (last tank standing) or Deathmatch (respawn after 3 s, first to N kills or 5 min). Saved on this device.
+let localMatch = 'rounds', dmTarget = TT.DM.TARGET;
+try { const v = JSON.parse(localStorage.getItem('tt-match')); if (v && (v.m === 'rounds' || v.m === 'dm')) localMatch = v.m; if (v && TT.DM.TARGETS.includes(v.k)) dmTarget = v.k; } catch {}
+const saveMatch = () => { try { localStorage.setItem('tt-match', JSON.stringify({ m: localMatch, k: dmTarget })); } catch {} };
+const fmtTime = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const STICK_MODES = ['tank', 'point'];
 let stickModes = (() => { try { const v = JSON.parse(localStorage.getItem('tt-stick')); if (Array.isArray(v)) return [0, 1].map(i => STICK_MODES.includes(v[i]) ? v[i] : 'tank'); } catch {} return ['tank', 'tank']; })();
 const saveStickModes = () => { try { localStorage.setItem('tt-stick', JSON.stringify(stickModes)); } catch {} };
@@ -1055,6 +1166,9 @@ function refreshMenu() {
   document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === botLevel));
   $('botN').textContent = nBots;
   document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.classList.toggle('sel', b.dataset.m === localMode));
+  document.querySelectorAll('#matchSel button[data-g]').forEach(b => b.classList.toggle('sel', b.dataset.g === localMatch));
+  document.querySelectorAll('#targetSel button[data-k]').forEach(b => b.classList.toggle('sel', +b.dataset.k === dmTarget));
+  show('targetSel', localMatch === 'dm');
   show('teamPick', localMode === 'teams');
   if (localMode === 'teams') { $('teamPick').innerHTML = '<span class="muted">Tap to switch team:</span> ' + teamBadges();
     $('teamPick').querySelectorAll('button.team').forEach(b => b.onclick = () => { localTeams[+b.dataset.i] ^= 1; refreshMenu(); }); }
@@ -1066,6 +1180,8 @@ function refreshMenu() {
 document.querySelectorAll('#nSel button[data-n]').forEach(b => b.onclick = () => { nLocal = +b.dataset.n; refreshMenu(); });
 document.querySelectorAll('#lvlSel button[data-l]').forEach(b => b.onclick = () => { botLevel = b.dataset.l; refreshMenu(); });
 document.querySelectorAll('#modeSel button[data-m]').forEach(b => b.onclick = () => { localMode = b.dataset.m; refreshMenu(); });
+document.querySelectorAll('#matchSel button[data-g]').forEach(b => b.onclick = () => { localMatch = b.dataset.g; saveMatch(); refreshMenu(); });
+document.querySelectorAll('#targetSel button[data-k]').forEach(b => b.onclick = () => { dmTarget = +b.dataset.k; saveMatch(); refreshMenu(); });
 $('botMinus').onclick = () => { nBots = Math.max(0, nBots - 1); refreshMenu(); };
 $('botPlus').onclick = () => { nBots = Math.min(MAX_TANKS - nLocal, nBots + 1); refreshMenu(); };
 // Touch stick mode per player (only the humans on this phone: P1, and P2 when 2+ players share it)
@@ -1101,7 +1217,7 @@ const qs = new URLSearchParams(location.search);
 $('name').value = localStorage.getItem('tt-name') || '';
 if (qs.get('room')) { $('code').value = qs.get('room').toUpperCase(); setTimeout(() => $('name').focus(), 50); }
 
-const inOverlay = () => !$('pause').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
+const inOverlay = () => !$('pause').classList.contains('hidden') || !$('over').classList.contains('hidden') || !$('lobby').classList.contains('hidden') || !$('menu').classList.contains('hidden');
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 let msgTimer;
 function flash(t, ms = 2500) { $('msg').textContent = t; show('msg', true); clearTimeout(msgTimer); msgTimer = setTimeout(() => show('msg', false), ms); }
@@ -1113,7 +1229,7 @@ let paused = false;
 let net = null;            // online state
 const particles = [];
 
-$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null);
+$('playLocal').onclick = () => startLocal(nLocal, nBots, botLevel, localMode === 'teams' ? localTeams.slice() : null, localMatch === 'dm' ? dmTarget : 0);
 $('create').onclick = () => connect({ t: 'create' });
 $('join').onclick = () => { const c = $('code').value.trim().toUpperCase(); if (c.length < 4) return ($('err').textContent = 'Enter the 4-letter room code.'); connect({ t: 'join', code: c }); };
 $('code').onkeydown = e => { if (e.key === 'Enter') $('join').click(); };
@@ -1130,10 +1246,35 @@ document.querySelectorAll('#modeRow button[data-m]').forEach(b => b.onclick = ()
 $('switchTeam').onclick = () => net && net.send({ t: 'setTeam' });
 $('plist').addEventListener('click', e => { const b = e.target.closest('[data-team-id]'); if (b && net) net.send({ t: 'setTeam', id: +b.dataset.teamId }); });
 document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.onclick = () => net && net.send({ t: 'setLevel', level: b.dataset.l }));
+document.querySelectorAll('#matchRow button[data-g]').forEach(b => b.onclick = () => net && net.send({ t: 'setMatch', match: b.dataset.g, target: net.target }));
+$('targetBtn').onclick = () => { if (!net) return; const T = TT.DM.TARGETS; net.send({ t: 'setMatch', match: 'dm', target: T[(T.indexOf(net.target) + 1) % T.length] }); }; // 10 -> 15 -> 25 -> 10
+// Deathmatch end screen: local = play again / quit; online host = play again / lobby / leave; guests wait for the host
+$('again').onclick = () => { if (mode === 'local' && lastLocal) startLocal(...lastLocal); else if (net) net.send({ t: 'start' }); };
+$('overLobby').onclick = () => net && net.send({ t: 'stop' });
+$('overQuit').onclick = () => quit();
+let overShown = false;
+function showOver(players, teams, teamScore, win, target) {
+  overShown = true;
+  const name = id => { const p = players.find(p => p.id === id); return p ? p.name : '?'; };
+  let title;
+  if (teams) title = win.team < 0 ? "It's a draw!" : `${TEAM_NAMES[win.team]} team wins!`;
+  else title = !win.id ? "It's a draw!" : (mode === 'online' && net && win.id === net.you ? 'You win!' : `${esc(name(win.id))} wins!`);
+  $('overTitle').innerHTML = title;
+  $('overSub').textContent = win.reason === 'time' ? "Time's up" : `First to ${target} kills`;
+  const rows = players.slice().sort((a, b) => b.score - a.score);
+  $('overList').innerHTML = (teams ? [0, 1].map(t => `<li class="tm" style="color:${TEAM_COLORS[t]}"><b>${TEAM_NAMES[t]} team</b><b>${teamScore[t]}</b></li>`).join('') : '')
+    + rows.map(p => `<li><span class="dot" style="background:${COLORS[p.color]}"></span>${teams ? `<i style="color:${TEAM_COLORS[p.team || 0]}">${TEAM_NAMES[p.team || 0][0]}</i>` : ''}<span class="nm">${esc(p.name)}${mode === 'online' && net && p.id === net.you ? ' (you)' : ''}</span><b>${p.score}</b></li>`).join('');
+  const host = mode === 'local' || (net && net.you === net.host);
+  const row = (id, on) => $(id).parentElement.classList.toggle('hidden', !on);
+  row('again', host); row('overLobby', mode === 'online' && host); show('overWait', !host);
+  $('overQuit').textContent = mode === 'online' ? 'Leave room' : 'Quit to title';
+  show('pause', false); show('over', true); beep(660, 0.12, 'triangle', 0.06, 1.5); setTimeout(() => beep(990, 0.25, 'triangle', 0.06, 1.2), 140);
+}
+function hideOver() { overShown = false; show('over', false); }
 
 function togglePause(on) {
   if (on === undefined) on = $('pause').classList.contains('hidden');
-  if (!$('lobby').classList.contains('hidden')) return;
+  if (!$('lobby').classList.contains('hidden') || !$('over').classList.contains('hidden')) return;
   paused = on && mode === 'local';
   show('toLobbyRow', mode === 'online' && net && net.you === net.host);
   show('pause', on);
@@ -1141,17 +1282,19 @@ function togglePause(on) {
 function quit(keepErr) {
   if (net) { net.closed = true; try { net.send({ t: 'leave' }); net.ws.close(); } catch {} net = null; }
   mode = null; game = null; paused = false; particles.length = 0; bubbles.clear(); setupReact(null);
-  ['pause', 'lobby', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false));
+  ['pause', 'lobby', 'over', 'menuBtn', 'padL', 'padR'].forEach(id => show(id, false)); overShown = false;
   show('menu', true); refreshMenu();
   history.replaceState(null, '', location.pathname);
 }
 
 // ---------- local game ----------
-let brains = {};
+let brains = {}, lastLocal = null;
 // teams: null = free-for-all, true = auto-balanced teams, or an array of 0/1 per tank (humans first, then bots)
-function startLocal(n, bots = 0, level = 'normal', teams = null) {
-  audioInit();
+// dm: 0 = rounds, otherwise Deathmatch to that many kills (5-minute limit)
+function startLocal(n, bots = 0, level = 'normal', teams = null, dm = 0) {
+  audioInit(); lastLocal = [n, bots, level, Array.isArray(teams) ? teams.slice() : teams, dm]; hideOver();
   mode = 'local'; game = TT.createGame(); paused = false; brains = {};
+  if (dm) TT.setMatch(game, 'dm', { target: dm });
   if (teams) { TT.setMode(game, 'teams'); if (!Array.isArray(teams)) teams = TT.balanceTeams([...Array(n).fill({ bot: false }), ...Array(bots).fill({ bot: true })]); }
   const team = i => (teams ? teams[i] : undefined);
   for (let i = 0; i < n; i++) TT.addPlayer(game, { id: i + 1, name: `P${i + 1}`, colorIndex: i, team: team(i) });
@@ -1163,6 +1306,7 @@ function startLocal(n, bots = 0, level = 'normal', teams = null) {
   show('menu', false); show('menuBtn', true);
   setupTouch(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
   bubbles.clear(); setupReact(isTouch ? (n >= 2 ? 'local2' : n === 1 ? 'local1' : null) : null);
+  if (dm) flash(`Deathmatch · first to ${game.dmTarget} kills`, 2500); else
   flash(teams ? 'Teams: Red vs Blue — last team standing scores!' : n === 2 && !bots ? 'Red: E S D F + Q   ·   Green: arrows + M' : 'Last tank standing scores!');
 }
 let acc = 0;
@@ -1179,6 +1323,7 @@ function localTick(dt) {
     handleEvents(game.events.splice(0), id => game.tanks[id]);
     acc -= 1 / 60;
   }
+  if (game.phase === 'over' && !overShown) showOver(game.players, game.mode === 'teams', game.teamScore, game.winner, game.dmTarget);
 }
 
 // ---------- online ----------
@@ -1233,23 +1378,27 @@ function openSocket(me, firstMsg) {
       show('menu', false); show('menuBtn', true); if (!re) { setupTouch(isTouch ? 'online' : null); bubbles.clear(); setupReact('online'); } else flash('Reconnected!');
     } else if (m.t === 'lobby') {
       me.players = m.players; me.host = m.host; me.code = m.code; me.level = m.level; me.mode = m.mode || 'ffa'; if (m.teamScore) me.teamScore = m.teamScore;
-      if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; }
+      me.match = m.match === 'dm' ? 'dm' : 'rounds'; if (m.target) me.target = m.target;
+      if (m.started) for (const q of m.players) { const p = me.players.find(p => p.id === q.id); if (p) p.score = q.score; }
+      if (me.started && !m.started) { me.maze = null; me.snaps = []; me.pb = null; me.win = null; hideOver(); }
       me.started = m.started; renderLobby();
     } else if (m.t === 'react') {
       if (Number.isInteger(m.r) && TT.REACTIONS[m.r]) showBubble(m.id, m.r);
     } else if (m.t === 'maze') {
-      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 };
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
     } else if (m.t === 's') {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
-      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
+      const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8], respawn: t[9] || 0, prot: !!t[10] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
         crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
       for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
       if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
+      me.dm = m.dm ? { left: m.dm[0], target: m.dm[1] } : null; me.phase = m.phase;
+      if (m.phase === 'over' && m.win && !overShown) { me.win = m.win; showOver(me.players, me.mode === 'teams', me.teamScore || [0, 0], m.win, me.dm ? me.dm.target : me.target); }
     }
   };
 }
@@ -1262,6 +1411,8 @@ function renderLobby() {
     + (net.players.length < 2 ? '<li class="muted">Share the code or link, or add bots (up to 8 tanks)…</li>' : '');
   show('modeRow', true); document.querySelectorAll('#modeRow button[data-m]').forEach(b => { b.classList.toggle('sel', b.dataset.m === net.mode); b.disabled = !host; });
   show('switchTeam', teams);
+  show('matchRow', true); document.querySelectorAll('#matchRow button[data-g]').forEach(b => { b.classList.toggle('sel', b.dataset.g === net.match); b.disabled = !host; });
+  show('targetBtn', net.match === 'dm'); $('targetBtn').textContent = `${net.target || TT.DM.TARGET} kills`; $('targetBtn').disabled = !host;
   show('start', host); show('waitHost', !host); show('botRow', host); show('lvlRow', host);
   $('lobbyBots').textContent = net.players.filter(p => p.bot).length;
   document.querySelectorAll('#lvlRow button[data-l]').forEach(b => b.classList.toggle('sel', b.dataset.l === net.level));
@@ -1325,7 +1476,8 @@ function onlineView(dt) {
   const tanks = [];
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
-    tanks.push({ id, x: ta.x + (tb.x - ta.x) * t, y: ta.y + (tb.y - ta.y) * t, a: lerpAngle(ta.a, tb.a, t), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge });
+    const k = ta.alive === tb.alive ? t : 1; // a respawn jumps, it doesn't slide across the maze
+    tanks.push({ id, x: ta.x + (tb.x - ta.x) * k, y: ta.y + (tb.y - ta.y) * k, a: lerpAngle(ta.a, tb.a, k), alive: tb.alive && (t > 0.5 || ta.alive), weapon: tb.weapon, ammo: tb.ammo, charge: tb.charge, respawn: tb.respawn, prot: tb.prot });
   }
   const mine = net.pb && tanks.find(x => x.id === net.you);
   if (mine && mine.alive) {
@@ -1338,7 +1490,7 @@ function onlineView(dt) {
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
-    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0] };
+    teams: net.mode === 'teams', teamScore: net.teamScore || [0, 0], dm: net.dm, phase: b.phase };
 }
 
 // ---------- effects & sound ----------
@@ -1368,6 +1520,7 @@ function handleEvents(evs, tankOf) {
     else if (e.type === 'mine') beep(220, 0.08, 'square', 0.03);
     else if (e.type === 'reveal') beep(1250, 0.12, 'square', 0.05, 0.9);
     else if (e.type === 'pickup') { beep(660, 0.08, 'triangle', 0.06, 1.5); }
+    else if (e.type === 'respawn') beep(440, 0.12, 'sine', 0.05, 2);
     else if (e.type === 'burst') {
       boom();
       for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
@@ -1527,7 +1680,7 @@ function drawBubble(x, y, r, age) {
 }
 
 // ---------- rendering ----------
-let teamBar = false; // team mode: a team-score strip across the top
+let teamBar = false; // team mode / deathmatch: a score + timer strip across the top
 function layout(maze, n = 2) {
   const W = innerWidth, H = innerHeight, top = teamBar ? 34 : 0;
   const port = H > W; // portrait: controls sit in a strip under the maze instead of at the sides
@@ -1685,7 +1838,7 @@ function render(view, dt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#cfcfcf'; ctx.fillRect(0, 0, innerWidth, innerHeight);
   if (!view) { ctx.fillStyle = '#666'; ctx.font = '16px Verdana'; ctx.textAlign = 'center'; ctx.fillText(mode ? 'Waiting for the round…' : '', innerWidth / 2, innerHeight / 2); return; }
-  teamBar = !!view.teams;
+  teamBar = !!(view.teams || view.dm);
   const teamOfId = id => { const p = view.players.find(p => p.id === id); return p && p.team != null ? p.team : 0; };
   const m = view.maze, L = layout(m, view.players.length), CS = C.CELL, rects = view.rects || TT.mazeRects(m);
   const colorOf = id => { const p = view.players.find(p => p.id === id); return COLORS[p ? p.color : 0]; };
@@ -1722,8 +1875,11 @@ function render(view, dt) {
       ctx.save(); ctx.strokeStyle = '#7df'; ctx.shadowColor = '#7df'; ctx.shadowBlur = 12; ctx.lineWidth = 2 + 2 * k; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(performance.now() / 60));
       ctx.beginPath(); ctx.arc(t.x, t.y, 24 - 8 * k, 0, 6.283); ctx.stroke(); ctx.restore();
     }
+    const blink = t.prot && Math.sin(performance.now() / 55) > 0; // spawn protection: blinking, shots pass through
+    if (blink) { ctx.save(); ctx.globalAlpha = 0.3; }
     if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
     drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+    if (blink) ctx.restore();
   }
   // projectiles
   for (const b of view.bullets) drawProjectile(b, colorOf);
@@ -1744,7 +1900,7 @@ function render(view, dt) {
     ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
-  if (view.teams) drawTeamBar(view);
+  if (view.dm) drawDmBar(view); else if (view.teams) drawTeamBar(view);
   // HUD: scores + current weapon at the bottom
   const ps = view.players, n = ps.length, rows = L.rows, per = Math.ceil(n / rows), rowH = L.hud / rows;
   const slot = Math.min(220, (innerWidth - (padMode ? L.side * 2 : 20)) / Math.max(1, per));
@@ -1755,12 +1911,16 @@ function render(view, dt) {
     const hy = innerHeight - L.bot - L.hud + rowH * (row + 0.5) - 4;
     const cx = innerWidth / 2 + (col - (inRow - 1) / 2) * slot - 14, sc = Math.min(1.3, rowH / 50, slot / 120);
     hudAt[p.id] = { x: cx - 26 * sc, y: hy - 16 * sc };
-    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null;
+    const t = view.tanks.find(t => t.id === p.id), w = t && t.alive ? t.weapon : null, wait = view.dm && t && !t.alive && t.respawn > 0;
     if (view.teams) teamRing(cx - 26 * sc, hy, TEAM_COLORS[p.team || 0], sc);
+    if (wait) ctx.globalAlpha = 0.3;
     drawTank(cx - 26 * sc, hy, -Math.PI / 2, COLORS[p.color], sc, w);
+    ctx.globalAlpha = 1;
+    if (wait) { ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.font = `bold ${Math.round(18 * sc)}px Verdana, sans-serif`; ctx.fillText(Math.ceil(t.respawn), cx - 26 * sc, hy + 1); }
     ctx.fillStyle = '#333'; ctx.textAlign = 'left';
     ctx.font = `bold ${Math.round(24 * sc)}px Verdana, sans-serif`;
-    if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
+    if (view.dm) { ctx.fillStyle = view.teams ? TEAM_COLORS[p.team || 0] : '#333'; ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc); } // deathmatch: kills
+    else if (view.teams) { ctx.fillStyle = TEAM_COLORS[p.team || 0]; ctx.font = `bold ${Math.round(13 * sc)}px Verdana, sans-serif`; ctx.fillText(TEAM_NAMES[p.team || 0].toUpperCase(), cx - 6 * sc, hy - 5 * sc); }
     else ctx.fillText(p.score, cx - 6 * sc, hy - 5 * sc);
     // weapon icon box next to the score
     const ix = cx + (view.teams ? 44 : 30) * sc, iy = hy - 6 * sc, bs = 20 * sc;
@@ -1774,6 +1934,7 @@ function render(view, dt) {
     const sub = view.legend && view.legend[i] ? view.legend[i] : (p.name + (p.you ? ' (you)' : ''));
     ctx.fillText(w && !p.bot ? TT.WEAPON_NAMES[w] : sub, cx - 6 * sc, hy + 13 * sc);
   });
+  if (view.dm && view.phase !== 'over') drawRespawnBanner(view, L);
   // reaction bubbles: over the tank while alive, over the player's score while dead
   const now = performance.now();
   for (const [id, bb] of bubbles) {
@@ -1799,10 +1960,46 @@ function drawTeamBar(view) {
   ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + 12, y);
   ctx.restore();
 }
+// Deathmatch strip: time left in the middle; FFA shows the kill target, Teams the two team totals.
+function drawDmBar(view) {
+  const y = 20, cx = innerWidth / 2, ts = view.teamScore || [0, 0], dm = view.dm;
+  const bw = Math.max(130, Math.min(260, innerWidth - 216)), fs = Math.max(12, Math.round(18 * bw / 260));
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.font = `bold ${fs}px Verdana, sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillRect(cx - bw / 2, y - 15, bw, 30);
+  const low = dm.left <= 30 && view.phase !== 'over';
+  if (view.teams) {
+    ctx.textAlign = 'right'; ctx.fillStyle = TEAM_COLORS[0]; ctx.fillText(`RED ${ts[0]}`, cx - bw * 0.14, y);
+    ctx.textAlign = 'left'; ctx.fillStyle = TEAM_COLORS[1]; ctx.fillText(`${ts[1]} BLUE`, cx + bw * 0.14, y);
+    ctx.textAlign = 'center'; ctx.fillStyle = low ? '#c22' : '#555'; ctx.font = `bold ${Math.round(fs * 0.8)}px Verdana, sans-serif`; ctx.fillText(fmtTime(dm.left), cx, y);
+  } else {
+    ctx.textAlign = 'center'; ctx.fillStyle = low ? '#c22' : '#444'; ctx.fillText(`⏱ ${fmtTime(dm.left)}`, cx - bw * 0.2, y);
+    ctx.fillStyle = '#666'; ctx.font = `bold ${Math.round(fs * 0.75)}px Verdana, sans-serif`; ctx.fillText(`first to ${dm.target}`, cx + bw * 0.22, y);
+  }
+  ctx.restore();
+}
+// "Respawning in 3…" for the humans on this screen who are waiting (you online; every local player sharing the device)
+function drawRespawnBanner(view, L) {
+  const mine = view.players.filter(p => (mode === 'online' ? p.you : !p.bot)).map(p => [p, view.tanks.find(t => t.id === p.id)]).filter(([, t]) => t && !t.alive && t.respawn > 0);
+  if (!mine.length) return;
+  const solo = mine.length === 1 && view.players.filter(p => (mode === 'online' ? p.you : !p.bot)).length === 1;
+  const parts = mine.map(([p, t]) => [solo ? `Respawning in ${Math.ceil(t.respawn)}…` : `${p.name} ${Math.ceil(t.respawn)}…`, COLORS[p.color]]);
+  const mh = view.maze.rows * C.CELL * L.s, y = L.oy + mh * 0.5, fs = Math.round(Math.max(16, Math.min(30, innerWidth / 22)));
+  ctx.save(); ctx.font = `bold ${fs}px Verdana, sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  const gap = fs, ws = parts.map(([s]) => ctx.measureText(s).width + fs * 1.1), total = ws.reduce((a, b) => a + b, 0) + gap * (parts.length - 1) + fs;
+  let x = innerWidth / 2 - total / 2;
+  ctx.fillStyle = 'rgba(40,40,40,.78)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y - fs, total, fs * 2, fs) : ctx.rect(x, y - fs, total, fs * 2); ctx.fill();
+  x += fs / 2;
+  parts.forEach(([s, col], i) => {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + fs * 0.35, y, fs * 0.32, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(s, x + fs * 0.9, y + 1); x += ws[i] + gap;
+  });
+  ctx.restore();
+}
 function localView() {
   return { maze: game.maze, rects: game.rects, tanks: Object.values(game.tanks), bullets: game.bullets, players: game.players,
     crates: game.crates, beams: game.beams, mines: game.mines.map(m => ({ x: m.x, y: m.y, state: TT.mineState(m) })),
-    teams: game.mode === 'teams', teamScore: game.teamScore,
+    teams: game.mode === 'teams', teamScore: game.teamScore, phase: game.phase,
+    dm: TT.isDM(game) ? { left: game.dmLeft, target: game.dmTarget } : null,
     legend: game.players.map((p, i, a, s = keySets(a.filter(x => !x.bot).length)[i]) => p.bot ? p.name : `${s.label.slice(0, 4).join(' ')} + ${s.label[4]}`) };
 }
 
