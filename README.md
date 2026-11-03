@@ -1,7 +1,7 @@
 # Tank Tussle — a Tank Trouble (2015) style remake
 
 Top-down maze tank battles: small random mazes, slow round bullets that bounce off walls
-for 10 s (you can shoot yourself), one hit kills, last tank standing scores a point, new maze every round.
+for 10 s (you can shoot yourself), one hit kills, last tank standing scores a point, new maze every round — or play **Deathmatch**: respawn after 3 s, first to 15 kills (or most kills in 5 min) wins.
 All art is simple drawn shapes — no original assets.
 
 ## Run it
@@ -66,9 +66,21 @@ Online the server checks the reaction (allowed list + cooldown) and sends it to 
 - Bots never target teammates, hold fire when a teammate is in the line of fire (or near a frag bomb or mine), and don't treat teammates as enemies.
 - Online, the server decides the mode and teams (only the host can change the mode, only before the game starts). The lobby and snapshot messages carry each player's team and the team score.
 
+**Rounds or Deathmatch** — pick the *Game* on the title screen (local) or in the lobby (online, host only). Works with Free-for-all and Teams.
+- *Rounds* (default): the classic: one hit and you're out, last tank (or team) standing scores a point, then a new maze.
+- *Deathmatch*: no rounds. When you die you respawn **3 s** later at a safe spot (far from enemies, away from bullets, mines and beams),
+  blinking for 1.5 s while shots pass through you (firing ends the protection early). You come back with the normal cannon.
+  A "Respawning in 3…" banner shows the countdown (for every player sharing the screen), and your scoreboard tank shows it too.
+  Score = **kills**; killing yourself or a teammate costs 1. In Teams the team total counts.
+  The match ends when someone (or a team) reaches the kill target — **10, 15 (default) or 25**, picked under *Win at* — or after **5 minutes**
+  (most kills wins; equal = draw). The top bar shows the clock and the target (or both team totals). The end screen ranks everyone; *Play again* starts a new match
+  (online: the host; guests wait, the host can also go *Back to lobby*). Bots respawn and play on too.
+- Online, the server runs it all (respawn timer, spawn spot, protection, scores, clock and match end); players who join mid-match drop in after 1 s.
+  Deathmatch online needs the updated server / Docker image.
+
 ## Code layout
 
-- `public/game.js` – shared game logic (maze generation, movement, collisions, bouncing bullets, rounds/scores). Used by the browser (local mode) and by the server (online mode).
+- `public/game.js` – shared game logic (maze generation, movement, collisions, bouncing bullets, rounds/scores, deathmatch respawns + match end). Used by the browser (local mode) and by the server (online mode).
 - `public/client.js` – rendering, keyboard/touch input, local loop, online client (interpolates server snapshots).
 - `public/index.html` – UI/menus.
 - `server.js` – static file server + WebSocket rooms (`/ws`); authoritative 60 Hz simulation, 30 Hz snapshots.
@@ -181,7 +193,8 @@ Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG)
 ### Tests (optional, need Chrome + puppeteer-core)
 
 `tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
-- `node tests/stick-unit.js`, `node tests/teams-unit.js` and `node tests/reactions-unit.js` are pure Node (no browser).
+- `node tests/stick-unit.js`, `node tests/teams-unit.js`, `node tests/reactions-unit.js` and `node tests/deathmatch-unit.js` are pure Node (no browser).
+- `TT_DEBUG_DM=1 PORT=8098 npm start`, then `BASE=http://localhost:8098 node tests/deathmatch-headless.js`: Deathmatch picker on phones, local respawn countdown / HUD / end screen / play again, two players on one phone, and an online match (host picks it, server respawns + scores, time limit + kill target, back to lobby). `TT_DEBUG_DM=1` enables two test-only messages (kill a tank, set the clock). Screenshots go to `/workspace/deathmatch-shots/` (`OUT=` to change).
 - `BASE=http://localhost:8097 node tests/reactions-headless.js`: reactions (keys, phone picker, online broadcast + server checks) and an 8-player online room (9th refused, 4 v 4 teams, no overlapping spawns).
 - `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby/game fit without scrolling, 320 px → desktop) and `tests/pwa-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.
 `TT_DEBUG_WEAPONS=1 npm start` hands every tank a weapon at round start (used by the online weapon test).

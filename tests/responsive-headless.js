@@ -65,6 +65,8 @@ async function bothTabs(p, label) {
       await q.waitForFunction(() => __tt.net && __tt.net.code); for (let i = 0; i < 7; i++) { await q.click('#lbPlus'); await sleep(80); }
       await q.click('#modeRow button[data-m="teams"]'); await sleep(300);
       assertLayout(await check(q), 'lobby, Teams + 7 bots');
+      await q.click('#matchRow button[data-g="dm"]'); await sleep(300);
+      assertLayout(await check(q), 'lobby, Teams + Deathmatch + 7 bots');
       if (w === 390 && h === 844) await q.screenshot({ path: '/workspace/tank-trouble/screenshot-lobby-phone.png' });
       await q.close();
     }
