@@ -510,7 +510,7 @@
       const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
       if (rc) { rc.steer = rot; rot = 0; mv = 0; }
       if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }
-      if (t.weapon === 'deathray' && t.charge > 0) mv = 0; // locked in place while charging (can still aim)
+      if (t.weapon === 'deathray' && t.charge > 0) { rot = 0; mv = 0; } // frozen while charging: no driving, no turning
       t.px = t.x; t.py = t.y;
       moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;

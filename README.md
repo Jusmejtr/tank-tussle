@@ -95,7 +95,7 @@ The tank's turret changes shape so everyone can see what you carry, and the icon
 | Gatling gun | three thin barrels + collar | fire once: barrels spin up for ~1 s, then 24 tiny bullets spray out in a wobbly stream |
 | Laser | long thin glowing barrel | dashed aim guide (about half the range); fire = instant bouncing beam, stops at the first tank hit |
 | Frag bomb | stubby wide mortar | fire launches a bigger bullet; fire again (or hit a tank) to burst into shrapnel (auto-bursts after 3 s) |
-| Death ray | dish emitter | fire = 2 s charge (tank can't drive, can aim), then a beam that goes **through walls**, bends slightly towards tanks ahead and kills every other tank it touches until the outer wall |
+| Death ray | dish emitter | fire = 2 s charge (tank can't drive or turn), then a beam that goes **through walls**, bends slightly towards tanks ahead and kills every other tank it touches until the outer wall |
 | RC missile | white-nosed launcher + antenna | fire a missile you steer with left/right; your tank is frozen until it hits something or times out (7 s) |
 | Homing missile | launcher tube | bounces around for 2 s, then its smoke turns the colour of the nearest tank (can be you!) and it chases that tank through the maze |
 | Booby trap | flat striped box, no barrel | drops a mine behind you; armed after 1 s and fully invisible. A tank driving over it reveals it — stop at once and it stays quiet, move and it bursts into shrapnel. Bullets don't trigger it |

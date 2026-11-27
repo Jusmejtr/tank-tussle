@@ -368,7 +368,7 @@ function predictAt(b, to) {
   const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
   if (b.frozen) return p;
   for (let i = S.findIndex(e => e.s === b.s); i >= 0 && i < S.length; i++) {
-    const k = S[i].k, rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = b.charging ? 0 : (k.u ? 1 : 0) - (k.d ? 1 : 0);
+    const k = S[i].k, rot = b.charging ? 0 : (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = b.charging ? 0 : (k.u ? 1 : 0) - (k.d ? 1 : 0);
     if (!rot && !mv) continue;
     let t = Math.max(S[i].at, b.at);
     const end = i + 1 < S.length ? Math.min(to, S[i + 1].at) : to;
