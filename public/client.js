@@ -272,7 +272,7 @@ function connect(first) {
   audioInit();
   const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
   $('err').textContent = 'Connecting…';
-  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null, seq: 0, sent: [], pb: null, err: { x: 0, y: 0, a: 0 },
+  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], beamPts: new Map(), closed: false, retries: 0, ws: null, seq: 0, sent: [], pb: null, err: { x: 0, y: 0, a: 0 },
     send(m) { this.ws && this.ws.readyState === 1 && this.ws.send(JSON.stringify(m)); } };
   openSocket(net, Object.assign({ name }, first));
 }
@@ -310,17 +310,20 @@ function openSocket(me, firstMsg) {
       me.started = m.started; renderLobby();
     } else if (m.t === 'react') {
       if (Number.isInteger(m.r) && TT.REACTIONS[m.r]) showBubble(m.id, m.r);
+    } else if (m.t === 'kicked') {
+      flash(`${m.name} was removed: automated aiming detected`, 3000);
     } else if (m.t === 'maze') {
-      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.beamPts.clear(); me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
     } else if (m.t === 's') {
       if (m.round !== me.round) return;
       const now = performance.now(), est = m.time - now;
       me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
       const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8], respawn: t[9] || 0, prot: !!t[10] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
-        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: beamPts(me, x) })) };
+      if (me.beamPts.size > (m.bm || []).length) for (const id of me.beamPts.keys()) if (!(m.bm || []).some(x => x[0] === id)) me.beamPts.delete(id);
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
-      for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
+      if (m.sc) for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
       if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
       me.dm = m.dm ? { left: m.dm[0], target: m.dm[1] } : null; me.phase = m.phase;
@@ -328,6 +331,8 @@ function openSocket(me, firstMsg) {
     }
   };
 }
+// a beam's path comes only in the first snapshot that has it (the server leaves it out after that)
+function beamPts(me, x) { if (x[4]) me.beamPts.set(x[0], x[4]); return me.beamPts.get(x[0]) || []; }
 function renderLobby() {
   if (!net) return;
   $('roomCode').textContent = net.code;
@@ -368,7 +373,7 @@ function predictAt(b, to) {
   const p = { x: b.x, y: b.y, a: b.a }, S = net.sent;
   if (b.frozen) return p;
   for (let i = S.findIndex(e => e.s === b.s); i >= 0 && i < S.length; i++) {
-    const k = S[i].k, rot = (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = b.charging ? 0 : (k.u ? 1 : 0) - (k.d ? 1 : 0);
+    const k = S[i].k, rot = b.charging ? 0 : (k.r ? 1 : 0) - (k.l ? 1 : 0), mv = b.charging ? 0 : (k.u ? 1 : 0) - (k.d ? 1 : 0);
     if (!rot && !mv) continue;
     let t = Math.max(S[i].at, b.at);
     const end = i + 1 < S.length ? Math.min(to, S[i + 1].at) : to;

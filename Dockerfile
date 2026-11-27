@@ -3,7 +3,7 @@ LABEL org.opencontainers.image.source=https://github.com/matej-podzemny/tank-tus
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
-COPY server.js ./
+COPY server.js anticheat.js ./
 COPY public ./public
 ENV PORT=8090
 EXPOSE 8090
