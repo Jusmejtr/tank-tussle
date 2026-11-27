@@ -256,7 +256,7 @@ function localTick(dt) {
 function serverBase() {
   if (DISCORD) return location.origin + location.pathname.replace(/\/[^/]*$/, ''); // same origin, through Discord's proxy
   let s = window.TT_SERVER_URL || '';
-  if (!s && /^https?:$/.test(location.protocol) && !window.TT_STATIC) s = location.origin;
+  if (!s && /^https?:$/.test(location.protocol) ) s = location.origin;
   if (s && !/^(https?|wss?):\/\//.test(s)) s = 'https://' + s;
   return s.replace(/\/+$/, '');
 }
@@ -442,18 +442,21 @@ function beep(freq, dur, type = 'square', vol = 0.05, slide = 0) {
   if (!actx) return; const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
   o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+  return o;
 }
 function boom() {
   if (!actx) return; const len = actx.sampleRate * 0.5, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
   const s = actx.createBufferSource(), g = actx.createGain(); g.gain.value = 0.25; s.buffer = buf; s.connect(g).connect(actx.destination); s.start();
 }
+const spinSnd = {};
 function handleEvents(evs, tankOf) {
   for (const e of evs) {
     if (e.type === 'point' && e.team != null) { flash(`${TT.TEAM_NAMES[e.team]} team scores!`, 1800); beep(880, 0.15, 'triangle', 0.06, 1.3); }
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
-    else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'spin') spinSnd[e.id] = beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'spinstop') { try { spinSnd[e.id] && spinSnd[e.id].stop(); } catch (_) {} delete spinSnd[e.id]; }
     else if (e.type === 'shotgun') { beep(160, 0.18, 'square', 0.07, 0.4); beep(420, 0.08, 'sawtooth', 0.04, 0.5); }
     else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
     else if (e.type === 'charge') beep(140, TT.W.RAY_CHARGE, 'sine', 0.05, 6);
@@ -465,7 +468,7 @@ function handleEvents(evs, tankOf) {
     else if (e.type === 'respawn') beep(440, 0.12, 'sine', 0.05, 2);
     else if (e.type === 'burst') {
       boom();
-      for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
+      for (let i = 0; i < 7; i++) { const a = Math.random() * 6.283, s = 3 + Math.random() * 8; particles.push({ x: e.x + Math.cos(a) * 4, y: e.y + Math.sin(a) * 4, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.6 + Math.random() * 0.8, col: '#555', r: 5 + Math.random() * 4, grow: 3, alpha: 0.45, drag: 1 }); } // lingering smoke
     }
     else if (e.type === 'die') {
       boom();
@@ -672,8 +675,8 @@ function drawTurret(w, color, charge = 0) {
       disc(-1, 0, 6);
       break;
     }
-    case 'missile': // launcher tube with the missile nose poking out
-      ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+    case 'missile': // launcher tube with the missile nose poking out (empty while the missile flies)
+      if (charge >= 0) { ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke(); }
       box(-3, -4.5, 18, 9);
       ctx.fillStyle = DARK; ctx.fillRect(12.5, -3, 2.5, 6);
       ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(-3, 1.5, 18, 1.5);
@@ -770,9 +773,13 @@ function drawProjectile(b, colorOf) {
     ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
     ctx.restore(); return;
   }
-  ctx.fillStyle = k === 'frag' ? '#444' : '#222';
+  if (k === 'frag') { // little shard, random but stable orientation per piece
+    const a = (b.id || 0) * 2.399; ctx.fillStyle = '#222'; ctx.beginPath();
+    for (let i = 0; i < 3; i++) ctx.lineTo(b.x + Math.cos(a + i * 2.094) * 2.8, b.y + Math.sin(a + i * 2.094) * 2.8);
+    ctx.fill(); return;
+  }
+  ctx.fillStyle = '#222';
   ctx.beginPath(); ctx.arc(b.x, b.y, TT.KIND_R[k] || C.BULLET_R, 0, 6.283); ctx.fill();
-  if (k === 'bomb') { ctx.fillStyle = Math.sin(performance.now() / 70) > 0 ? '#f33' : '#600'; ctx.beginPath(); ctx.arc(b.x, b.y, 1.8, 0, 6.283); ctx.fill(); }
 }
 function render(view, dt) {
   const dpr = devicePixelRatio || 1;
@@ -820,7 +827,7 @@ function render(view, dt) {
     const blink = t.prot && Math.sin(performance.now() / 55) > 0; // spawn protection: blinking, shots pass through
     if (blink) { ctx.save(); ctx.globalAlpha = 0.3; }
     if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
-    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.weapon === 'missile' && !t.ammo ? -1 : t.charge);
     if (blink) ctx.restore();
   }
   // projectiles
@@ -838,8 +845,8 @@ function render(view, dt) {
   // particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]; p.life -= dt; if (p.life <= 0) { particles.splice(i, 1); continue; }
-    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.93; p.vy *= 0.93;
-    ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+    p.x += p.vx * dt; p.y += p.vy * dt; if (!p.drag) { p.vx *= 0.93; p.vy *= 0.93; } if (p.grow) p.r += p.grow * dt;
+    ctx.globalAlpha = Math.min(1, p.life / 0.4) * (p.alpha || 1); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
   if (view.dm) drawDmBar(view); else if (view.teams) drawTeamBar(view);
