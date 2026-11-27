@@ -482,6 +482,25 @@
   // roughly facing it (within POINT_DRIVE). It stops turning within `step` (one frame of rotation), so no jitter.
   // Screen angles = world angles (y points down, -PI/2 = up).
   const POINT_DRIVE = 40 * Math.PI / 180;
+  // Online render clock. Each snapshot gives est = server time - local time; the least delayed packet of the last 4 s
+  // (max est) is the true offset, the spread (to the 2nd percentile) is the jitter. Render that far behind (plus a snapshot interval and a
+  // margin), and only drift towards a new target at +-8 % speed, so the view never jumps back or races ahead.
+  function clockSample(c, est, now) {
+    if (c.s && c.s.length && Math.abs(est - c.s[c.s.length - 1][1]) > 2000) { c.s = null; c.off = null; } // new game: server time restarted
+    const s = c.s || (c.s = []); s.push([now, est]);
+    while (s.length > 1 && s[0][0] < now - 4000) s.shift();
+    const v = s.map(x => x[1]).sort((x, y) => x - y), max = v[v.length - 1], lo = v[Math.floor(v.length * 0.02)];
+    c.delay = Math.min(300, Math.max(50, 33 + (max - lo) + 15));
+    c.target = max - c.delay;
+    if (c.off == null || Math.abs(c.target - c.off) > 500) c.off = c.target;
+  }
+  function clockRender(c, now, dtMs) {
+    if (c.off == null) return null;
+    const lim = 0.08 * Math.max(0, dtMs);
+    c.off += Math.max(-lim, Math.min(lim, c.target - c.off));
+    return now + c.off;
+  }
+
   function pointKeys(a, target, step = C.TANK_ROT / 60) {
     const d = wrapA(target - a), k = { u: false, d: false, l: false, r: false };
     if (Math.abs(d) > step) { if (d > 0) k.r = true; else k.l = true; }
@@ -637,5 +656,5 @@
     };
   }
 
-  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, clockSample, clockRender, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
