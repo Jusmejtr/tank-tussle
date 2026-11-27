@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// WebSockets: any origin may connect (the static client can live on GitHub Pages)
+// WebSockets: any origin may connect (e.g. the single-file tank-tussle.html opened from disk)
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
 const rooms = new Map();
 const keyRooms = new Map(); // Discord Activity instance id -> room code (everyone in the same voice-channel activity shares one room)
@@ -63,13 +63,21 @@ function removeMember(room, id) {
 
 function startGame(room) {
   stopGame(room);
-  const g = room.game = TT.createGame(); TT.setMode(g, room.mode);
+  const g = room.game = TT.createGame(); TT.setMode(g, room.mode); room.net = null;
   TT.setMatch(g, room.match, { target: room.target });
   for (const id of room.order) { const m = room.members.get(id); TT.addPlayer(g, { id, name: m.name, colorIndex: m.color, team: m.team }); if (m.bot) m.brain = TTBots.newBrain(m.level); }
   TT.newRound(g); g.events.length = 0; debugArm(g);
   broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room));
-  let tick = 0, round = g.round, phase = g.phase;
+  let tick = 0, round = g.round, phase = g.phase, pend = [];
+  // setInterval runs a few % slow (and jitters); pace the simulation by the wall clock so game time = real time,
+  // which keeps the clients' interpolation clock steady. Catch up at most a few ticks after a stall.
+  let due = performance.now();
   room.loop = setInterval(() => {
+    const now = performance.now();
+    if (now - due > 100) due = now - 1000 * TICK;
+    for (let n = 0; due <= now && n < 4 && room.game === g; n++, due += 1000 * TICK) tickOnce();
+  }, 1000 * TICK / 2);
+  function tickOnce() {
     const inputs = {};
     for (const [id, m] of room.members) {
       if (m.bot) { if (!m.brain) m.brain = TTBots.newBrain(m.level); inputs[id] = TTBots.think(g, g.tanks[id], m.brain, TICK); }
@@ -81,12 +89,25 @@ function startGame(room) {
     for (const e of ev) { const br = TT.botReaction(e, id => { const x = room.members.get(id); return !!(x && x.bot); }); if (br) setTimeout(() => react(room, br.id, br.r), 500); }
     if (g.phase !== phase) { phase = g.phase; if (phase === 'over') broadcast(room, lobbyMsg(room)); } // deathmatch finished: final scores
     if (g.round !== round) { round = g.round; debugArm(g); broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room)); }
+    pend.push(...ev); // events of ticks without a snapshot ride along with the next one (else ~half the sounds/effects got lost)
     if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die' || e.type === 'respawn' || e.type === 'over')) {
-      const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round');
-      s.ak = [...room.members.values()].filter(m => m.seq).map(m => [m.id, m.seq, m.ticks]); // last input seq + ticks it has been applied (client prediction)
-      broadcast(room, s);
+      const s = TT.snapshot(g); s.ev = pend.filter(e => e.type !== 'bounce' && e.type !== 'round'); pend = [];
+      slim(room, s);
+      // each client only gets its own last input seq + ticks it has been applied (client prediction), not everyone's
+      const base = JSON.stringify(s).slice(0, -1);
+      for (const m of room.members.values()) if (!m.bot) send(m.ws, m.seq ? `${base},"ak":[[${m.id},${m.seq},${m.ticks}]]}` : base + '}');
     }
-  }, 1000 * TICK);
+  }
+}
+// Bandwidth: a beam's path is sent once (clients cache it by id); scores / mode / team totals only when they change.
+// room.net = null makes the next snapshot complete again (someone (re)joined).
+function slim(room, s) {
+  const n = room.net || (room.net = { beams: new Set(), sc: null }), live = new Set();
+  for (const b of s.bm) { live.add(b[0]); if (n.beams.has(b[0])) b.length = 4; }
+  n.beams = live;
+  const sc = JSON.stringify([s.sc, s.md, s.ts]);
+  if (sc === n.sc) { delete s.sc; delete s.md; delete s.ts; } else n.sc = sc;
+  if (s.win == null) delete s.win;
 }
 // Test hook: TT_DEBUG_WEAPONS=1 hands every tank a weapon at round start (used by the online weapon test)
 let debugN = 0;
@@ -100,7 +121,7 @@ wss.on('connection', ws => {
   let room = null, me = null;
   ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
   function attach(r, mb) {
-    room = r; me = mb; mb.ws = ws; mb.connected = true; clearTimeout(mb.dropTimer);
+    room = r; me = mb; mb.ws = ws; mb.connected = true; clearTimeout(mb.dropTimer); r.net = null;
     send(ws, { t: 'joined', code: r.code, you: mb.id, token: mb.token });
     broadcast(r, lobbyMsg(r));
     if (r.game) send(ws, mazeMsg(r));

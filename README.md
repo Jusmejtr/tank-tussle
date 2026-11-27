@@ -92,12 +92,12 @@ The tank's turret changes shape so everyone can see what you carry, and the icon
 
 | Weapon | Turret look | How it works |
 |---|---|---|
-| Gatling gun | three thin barrels + collar | fire once: barrels spin up for ~1 s, then 24 tiny bullets spray out in a wobbly stream |
+| Gatling gun | three thin barrels + collar | hold fire: barrels spin up for ~1 s, then up to 24 tiny bullets spray out in a wobbly stream — let go and it stops (letting go before it starts firing wastes it) |
 | Laser | long thin glowing barrel | dashed aim guide (about half the range); fire = instant bouncing beam, stops at the first tank hit |
-| Frag bomb | stubby wide mortar | fire launches a bigger bullet; fire again (or hit a tank) to burst into shrapnel (auto-bursts after 3 s) |
+| Frag bomb | stubby wide mortar | fire launches a big black ball; fire again (or hit a tank) to shatter it into ~40 shards that fly straight to the walls and stick there (auto-bursts after 5 s) |
 | Death ray | dish emitter | fire = 2 s charge (tank can't drive or turn), then a beam that goes **through walls**, bends slightly towards tanks ahead and kills every other tank it touches until the outer wall |
 | RC missile | white-nosed launcher + antenna | fire a missile you steer with left/right; your tank is frozen until it hits something or times out (7 s) |
-| Homing missile | launcher tube | bounces around for 2 s, then its smoke turns the colour of the nearest tank (can be you!) and it chases that tank through the maze |
+| Homing missile | launcher tube | bounces around for 2 s, then its smoke turns the colour of the nearest tank (can be you!) and it chases that tank through the maze; you can't fire again until it's gone |
 | Booby trap | flat striped box, no barrel | drops a mine behind you; armed after 1 s and fully invisible. A tank driving over it reveals it — stop at once and it stays quiet, move and it bursts into shrapnel. Bullets don't trigger it |
 | Shotgun | short double barrel | one blast of 14 tiny pellets in a cone; they bounce and vanish after 2–3 s |
 
@@ -116,6 +116,7 @@ With 0 humans you can watch an all-bot match. On a phone, 1 human + bots works w
 The server (`server.js`) is a small Node.js app: it serves the client from `public/` and runs every online room
 authoritatively (60 Hz simulation, 30 Hz state snapshots over WebSocket at path **`/ws`**; clients interpolate, and predict their own tank so it reacts instantly).
 It shares `public/game.js` (rules, weapons) and `public/bots.js` (AI) with the browser. No database, rooms live in memory.
+Snapshots only carry what clients draw (armed booby traps are never sent; a beam's path is sent once; scores only when they change; each client gets only its own input acks).
 
 **Requirements:** Node.js **18+** (tested on 22), one dependency (`ws`). ~1 small CPU core is plenty for many rooms.
 
@@ -126,7 +127,7 @@ PORT=3000 npm start  # custom port
 curl localhost:8090/health   # {"ok":true,"rooms":0,...}
 ```
 
-Open `http://<host>:8090/` — the same server also hosts a full copy of the client, so it is playable without GitHub Pages.
+Open `http://<host>:8090/` — the same server also hosts the client.
 
 ### Behind a reverse proxy with TLS (wss://)
 
@@ -164,8 +165,6 @@ curl localhost:8090/health   # {"ok":true,...}
 
 - The container listens on port **8090** (WebSocket path `/ws`). Map it as `-p <host-port>:8090`, or change it with `-e PORT=...`.
 - Update: `docker pull ghcr.io/matej-podzemny/tank-tussle:latest`, then remove and re-run the container.
-- The GitHub Pages site is served over https, so browsers can only connect to a **`wss://`** server. Put the container
-  behind a reverse proxy with TLS (nginx example above, or Caddy/Traefik) and set `docs/config.js` to the `https://` address.
 - Build it yourself instead: `docker build -t tank-tussle . && docker run -d -p 8090:8090 tank-tussle`.
 
 ### Discord Activity (play inside a Discord voice channel)
@@ -186,19 +185,6 @@ The client talks to the server through Discord's proxy on the same origin (`/ws`
 6. In Discord, join a voice channel → 🚀 (Activities) → pick the app → **Play in this channel ▶**.
    While the app is not published only you (and people you add to the app's team / testers) see it in the list.
 
-### Pointing the GitHub Pages client at the server
-
-`docs/` is the static GitHub Pages site (same client, plus `tank-tussle.html`). Edit **`docs/config.js`**:
-
-```js
-window.TT_STATIC = true;
-window.TT_SERVER_URL = 'https://tank.example.com';   // https -> client uses wss://<host>/ws
-```
-
-Commit and push; Pages serves it.
-CORS: WebSockets accept any origin and `/health` sends `Access-Control-Allow-Origin: *`, so the Pages origin can connect.
-Note: an `https://` Pages site cannot talk to a plain `ws://` server (mixed content) — the server needs TLS (`wss://`).
-
 ### Install as an app (PWA)
 The site is installable ("Add to Home Screen"): `manifest.webmanifest`, icons in `public/icons/`, and a service worker (`sw.js`) that caches the app so local play works offline. It never touches the game server (WebSocket `/ws`, `/health`, other origins).
 Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG) → `node tools/render_icons.js` (PNGs) → `node tools/icon_preview.js` (preview sheet).
@@ -206,12 +192,12 @@ Icon (minimal flat gold tank on navy) source: `python3 tools/make_icon.py` (SVG)
 ### Rebuilding the client copies
 
 `public/` is the source. After editing it run `python3 build.py` — it rebuilds the single-file `tank-tussle.html`
-(all JS inlined; works by double-click; online works there too if `TT_SERVER_URL` is set in `public/config.js`) and syncs `docs/` (keeps `docs/config.js`).
+(all JS inlined; works by double-click; online works there too if `TT_SERVER_URL` is set in `public/config.js`).
 
 ### Tests (optional, need Chrome + puppeteer-core)
 
 `tests/` holds the headless scripts used during development (weapons, bots, online sync/reconnect, phone joystick, teams).
-- `node tests/stick-unit.js`, `node tests/teams-unit.js`, `node tests/reactions-unit.js`, `node tests/deathmatch-unit.js` and `node tests/discord-join-unit.js` (starts its own server on PORT=8099) are pure Node (no browser).
+- `node tests/stick-unit.js`, `node tests/teams-unit.js`, `node tests/reactions-unit.js`, `node tests/deathmatch-unit.js`, `node tests/weapons-unit.js`, `node tests/netclock-unit.js` (online render clock under jitter) and `node tests/discord-join-unit.js` (starts its own server on PORT=8099) are pure Node (no browser).
 - `TT_DEBUG_DM=1 PORT=8098 npm start`, then `BASE=http://localhost:8098 node tests/deathmatch-headless.js`: Deathmatch picker on phones, local respawn countdown / HUD / end screen / play again, two players on one phone, and an online match (host picks it, server respawns + scores, time limit + kill target, back to lobby). `TT_DEBUG_DM=1` enables two test-only messages (kill a tank, set the clock). Screenshots go to `/workspace/deathmatch-shots/` (`OUT=` to change).
 - `BASE=http://localhost:8097 node tests/reactions-headless.js`: reactions (keys, phone picker, online broadcast + server checks) and an 8-player online room (9th refused, 4 v 4 teams, no overlapping spawns).
 - `tests/joystick-headless.js`, `tests/teams-headless.js` and `tests/responsive-headless.js` (menu/lobby/game fit without scrolling, 320 px → desktop) and `tests/pwa-headless.js` use Chrome. Their online part needs a server: `PORT=8097 npm start`, then `BASE=http://localhost:8097 node tests/teams-headless.js`.

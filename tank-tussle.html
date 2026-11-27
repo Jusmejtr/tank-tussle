@@ -251,7 +251,7 @@
 <script>
 // Online server for this copy of the client.
 // Leave empty when the page is served by server.js itself (same origin).
-// For the static GitHub Pages copy set it to your deployed server, e.g. 'https://tank-tussle.onrender.com'.
+// For the single-file tank-tussle.html (file://) set it to your deployed server, e.g. 'https://tank.example.com'.
 window.TT_SERVER_URL = window.TT_SERVER_URL || '';
 
 </script>
@@ -391,7 +391,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     CRATE_MIN: 8, CRATE_MAX: 12, CRATE_FIRST_MIN: 3, CRATE_FIRST_MAX: 6, MAX_CRATES: 3, CRATE_R: 10,
     GATLING_AMMO: 24, GATLING_SPIN: 1.0, GATLING_RATE: 0.07, GATLING_SPEED: 200, GATLING_LIFE: 3.5, GATLING_SPREAD: 0.13,
     LASER_LEN: 1100, LASER_GUIDE: 500,
-    FRAG_SPEED: 120, FRAG_FUSE: 3, FRAG_PIECES: 26, FRAG_PIECE_SPEED: 210,
+    FRAG_SPEED: 120, FRAG_FUSE: 5, FRAG_PIECES: 40, FRAG_PIECE_SPEED: 250, FRAG_LIFE: 8, FRAG_STICK: 0.6,
     RAY_CHARGE: 2.0, RAY_LEN: 2200, RAY_TURN: 0.003, RAY_CONE: 0.9, RAY_LOCK: 0.7,
     MISSILE_SPEED: 125, MISSILE_TURN: 3.0, MISSILE_LIFE: 9, MISSILE_SEEK_AFTER: 2.0,
     RC_SPEED: 130, RC_TURN: 3.4, RC_LIFE: 7,
@@ -599,8 +599,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   }
   function burstFrag(g, b) {
     for (let i = 0; i < W.FRAG_PIECES; i++) {
-      const a = Math.random() * Math.PI * 2, s = W.FRAG_PIECE_SPEED * rand(0.6, 1.1);
-      g.bullets.push({ id: g.nextId++, owner: b.owner, kind: 'frag', r: KIND_R.frag, x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0, life: rand(0.5, 1.0), grace: 0 });
+      const a = Math.random() * Math.PI * 2, s = W.FRAG_PIECE_SPEED * rand(0.75, 1.1);
+      g.bullets.push({ id: g.nextId++, owner: b.owner, kind: 'frag', r: KIND_R.frag, x: b.x, y: b.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0, life: W.FRAG_LIFE, grace: 0 });
     }
     g.events.push({ type: 'burst', x: b.x, y: b.y });
   }
@@ -652,7 +652,8 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
 
   function useWeapon(g, t, k, pressed, dt) {
     switch (t.weapon) {
-      case 'gatling': // one press: barrels spin up, then the whole belt sprays out
+      case 'gatling': // hold fire: barrels spin up, then it sprays while held; letting go (even mid spin-up) loses the gun
+        if ((t.charge > 0 || t.firing) && !k.f) { if (t.charge > 0) g.events.push({ type: 'spinstop', id: t.id }); t.weapon = null; t.charge = 0; t.firing = false; t.ammo = 0; break; }
         if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; t.firing = true; } }
         else if (!t.firing && pressed) { t.charge = W.GATLING_SPIN; g.events.push({ type: 'spin', id: t.id }); }
         if (t.firing && t.cool <= 0) {
@@ -675,8 +676,9 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         if (t.charge > 0) { t.charge -= dt; if (t.charge <= 0) { t.charge = 0; fireBeam(g, t, 'deathray'); t.weapon = null; } }
         else if (pressed) { t.charge = W.RAY_CHARGE; g.events.push({ type: 'charge', id: t.id }); }
         break;
-      case 'missile':
-        if (pressed) { spawnProjectile(g, t, 'missile', W.MISSILE_SPEED, { life: W.MISSILE_LIFE, grace: 0.5 }); t.weapon = null; g.events.push({ type: 'missile', id: t.id }); }
+      case 'missile': // no shooting at all until the launched missile is gone
+        if (!t.bombId) { if (pressed) { t.bombId = spawnProjectile(g, t, 'missile', W.MISSILE_SPEED, { life: W.MISSILE_LIFE, grace: 0.5 }).id; t.ammo = 0; g.events.push({ type: 'missile', id: t.id }); } }
+        else if (!g.bullets.some(b => b.id === t.bombId)) { t.weapon = null; t.bombId = 0; }
         break;
       case 'rc': // tank is frozen while its missile flies; left/right steer the missile
         if (!t.rcId) { if (pressed) { t.rcId = spawnProjectile(g, t, 'rc', W.RC_SPEED, { life: W.RC_LIFE, grace: 0.5, steer: 0 }).id; g.events.push({ type: 'missile', id: t.id }); } }
@@ -740,6 +742,32 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   // roughly facing it (within POINT_DRIVE). It stops turning within `step` (one frame of rotation), so no jitter.
   // Screen angles = world angles (y points down, -PI/2 = up).
   const POINT_DRIVE = 40 * Math.PI / 180;
+  // Online render clock. Each snapshot gives est = server time - local time; the least delayed packet of the last few
+  // seconds (max est) is the true offset, max - est is how late a packet was. Render far enough behind to cover the
+  // usual lateness (plus a snapshot interval and a margin); rarer spikes are bridged by the client's short
+  // extrapolation, not by delaying everything for the worst packet. Playback runs at exactly real speed and only
+  // adjusts (a few % fast/slow) once it is clearly off target, so moving things never visibly speed up / slow down
+  // all the time, and the view never jumps back.
+  const CLOCK = { WINDOW: 8000, PCT: 0.9, MARGIN: 10, MIN: 50, MAX: 250, AHEAD: 5, BEHIND: 40, RATE: 0.03, DECAY: 0.003 };
+  function clockSample(c, est, now) {
+    if (c.s && c.s.length && Math.abs(est - c.s[c.s.length - 1][1]) > 2000) { c.s = null; c.off = null; c.delay = null; } // new game: server time restarted
+    const s = c.s || (c.s = []); s.push([now, est]);
+    while (s.length > 1 && s[0][0] < now - CLOCK.WINDOW) s.shift();
+    const v = s.map(x => x[1]).sort((x, y) => x - y), max = v[v.length - 1], lo = v[Math.floor(v.length * (1 - CLOCK.PCT))];
+    const need = Math.min(CLOCK.MAX, Math.max(CLOCK.MIN, 33 + (max - lo) + CLOCK.MARGIN));
+    c.delay = c.delay == null || need > c.delay ? need : c.delay + (need - c.delay) * CLOCK.DECAY; // up at once, down slowly
+    c.target = max - c.delay;
+    if (c.off == null || Math.abs(c.target - c.off) > 500) { c.off = c.target; c.adj = false; }
+  }
+  function clockRender(c, now, dtMs) {
+    if (c.off == null) return null;
+    const d = c.target - c.off;
+    // too close to the newest data: slow down soon; merely more delayed than needed: only once it's clearly worth it
+    if (d < -CLOCK.AHEAD || d > CLOCK.BEHIND) c.adj = true; else if (Math.abs(d) < 2) c.adj = false;
+    if (c.adj) { const lim = CLOCK.RATE * Math.max(0, dtMs); c.off += Math.max(-lim, Math.min(lim, d)); }
+    return now + c.off;
+  }
+
   function pointKeys(a, target, step = C.TANK_ROT / 60) {
     const d = wrapA(target - a), k = { u: false, d: false, l: false, r: false };
     if (Math.abs(d) > step) { if (d > 0) k.r = true; else k.l = true; }
@@ -813,8 +841,21 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
         const cur = Math.atan2(b.vy, b.vx) + b.steer * W.RC_TURN * dt;
         b.vx = Math.cos(cur) * W.RC_SPEED; b.vy = Math.sin(cur) * W.RC_SPEED; b.steer = 0;
       }
-      if (moveBullet(b, Math.hypot(b.vx, b.vy) * dt, g.rects)) g.events.push({ type: 'bounce' });
-      b.a = Math.atan2(b.vy, b.vx);
+      // frag shards fly straight until they hit a wall, stick into it (harmless) and vanish shortly after
+      if (b.kind === 'frag') {
+        if (b.stuck) { keep.push(b); continue; }
+        const sp = Math.hypot(b.vx, b.vy) || 1, dx = b.vx / sp, dy = b.vy / sp;
+        if (moveBullet(b, sp * dt, g.rects)) {
+          // slide on along the original heading until the shard's centre is just inside the wall, so it looks embedded
+          for (let d = 0; d < b.r + 3; d += 0.25) {
+            if (g.rects.some(q => circleHitsRect(b.x + dx * d, b.y + dy * d, 0.01, q))) { b.x += dx * (d + 1); b.y += dy * (d + 1); break; }
+          }
+          b.stuck = true; b.vx = b.vy = 0; b.life = b.age + W.FRAG_STICK; keep.push(b); continue;
+        }
+      } else {
+        if (moveBullet(b, Math.hypot(b.vx, b.vy) * dt, g.rects)) g.events.push({ type: 'bounce' });
+        b.a = Math.atan2(b.vy, b.vx);
+      }
       let hit = false;
       for (const t of tanks) {
         if (!t.alive || t.prot > 0) continue; // spawn-protected tanks: shots pass through
@@ -885,9 +926,9 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
       tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0, !t.alive && t.respawn > 0 ? Math.ceil(t.respawn * 10) / 10 : 0, t.prot > 0 ? 1 : 0]),
-      b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
+      b: g.bullets.map(b => b.kind === 'missile' || b.kind === 'rc' ? [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0] : [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind)]), // heading/target only matter for drawing missiles
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
-      mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
+      mn: g.mines.filter(m => mineState(m) !== 1).map(m => [m.id, r1(m.x), r1(m.y), mineState(m)]), // armed traps are invisible: never tell clients where they are
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
       sc: g.players.map(p => [p.id, p.score, p.team]),
       md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,
@@ -895,7 +936,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     };
   }
 
-  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, CLOCK, clockSample, clockRender, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });
 
 </script>
@@ -964,7 +1005,7 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
   // Is a projectile about to hit me? Returns the threatening bullet's velocity or null.
   function threat(g, t) {
     for (const b of g.bullets) {
-      if (Math.hypot(b.x - t.x, b.y - t.y) > 170) continue;
+      if (b.stuck || Math.hypot(b.x - t.x, b.y - t.y) > 170) continue;
       if (b.owner === t.id && b.age < 0.25) continue;
       if (!TT.FRIENDLY_FIRE && TT.sameTeam(g, t.id, b.owner)) continue; // teammates' shots pass through us
       const p = { x: b.x, y: b.y, vx: b.vx, vy: b.vy, r: b.r };
@@ -1080,8 +1121,9 @@ window.TT_SERVER_URL = window.TT_SERVER_URL || '';
     }
     br.thr = (br.thr || 0) + (thr - (br.thr || 0)) * Math.min(1, dt * 10);
     if (br.thr > 0.02) k.u = br.thr; else if (br.thr < -0.02) k.d = -br.thr;
-    // fire (needs a fresh press each time, except gatling which is held)
-    if (plan.fire && br.cool <= 0) {
+    // fire (needs a fresh press each time, except gatling which is held — and must stay held once it spins up, or it's lost)
+    if (t.weapon === 'gatling' && (t.charge > 0 || t.firing)) k.f = true;
+    else if (plan.fire && br.cool <= 0) {
       if (t.weapon === 'gatling') k.f = true;
       else if (!br.lastF) { k.f = true; br.cool = t.weapon ? 0.3 : L.fireGap * (0.7 + Math.random() * 0.6); plan.fire = false; }
     }
@@ -1355,7 +1397,7 @@ function localTick(dt) {
 function serverBase() {
   if (DISCORD) return location.origin + location.pathname.replace(/\/[^/]*$/, ''); // same origin, through Discord's proxy
   let s = window.TT_SERVER_URL || '';
-  if (!s && /^https?:$/.test(location.protocol) && !window.TT_STATIC) s = location.origin;
+  if (!s && /^https?:$/.test(location.protocol) ) s = location.origin;
   if (s && !/^(https?|wss?):\/\//.test(s)) s = 'https://' + s;
   return s.replace(/\/+$/, '');
 }
@@ -1371,7 +1413,7 @@ function connect(first) {
   audioInit();
   const name = $('name').value.trim(); localStorage.setItem('tt-name', name);
   $('err').textContent = 'Connecting…';
-  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], offset: null, lastSent: '', lastSentAt: 0, pendingEv: [], closed: false, retries: 0, ws: null, seq: 0, sent: [], pb: null, err: { x: 0, y: 0, a: 0 },
+  net = { base, you: null, host: null, code: null, token: null, players: [], started: false, maze: null, rects: null, round: 0, snaps: [], clock: {}, lastSent: '', lastSentAt: 0, pendingEv: [], beamPts: new Map(), closed: false, retries: 0, ws: null, seq: 0, sent: [], pb: null, err: { x: 0, y: 0, a: 0 },
     send(m) { this.ws && this.ws.readyState === 1 && this.ws.send(JSON.stringify(m)); } };
   openSocket(net, Object.assign({ name }, first));
 }
@@ -1410,16 +1452,17 @@ function openSocket(me, firstMsg) {
     } else if (m.t === 'react') {
       if (Number.isInteger(m.r) && TT.REACTIONS[m.r]) showBubble(m.id, m.r);
     } else if (m.t === 'maze') {
-      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
+      me.maze = m.maze; me.rects = TT.mazeRects(m.maze); me.round = m.round; me.snaps = []; me.pendingEv = []; me.beamPts.clear(); me.pb = null; me.err = { x: 0, y: 0, a: 0 }; me.win = null; me.dm = null; hideOver();
     } else if (m.t === 's') {
       if (m.round !== me.round) return;
-      const now = performance.now(), est = m.time - now;
-      me.offset = me.offset == null || est < me.offset ? est : me.offset * 0.98 + est * 0.02; // track the fastest path
+      const now = performance.now();
+      TT.clockSample(me.clock, m.time - now, now);
       const snap = { time: m.time, phase: m.phase, tanks: new Map(m.tk.map(t => [t[0], { id: t[0], x: t[1], y: t[2], a: t[3], alive: !!t[4], weapon: t[5] >= 0 ? TT.WEAPONS[t[5]] : null, ammo: t[6], charge: t[7], frozen: !!t[8], respawn: t[9] || 0, prot: !!t[10] }])), bullets: new Map(m.b.map(b => [b[0], { x: b[1], y: b[2], kind: TT.KINDS[b[3]], a: b[4], tgt: b[5] }])),
-        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: x[4] })) };
+        crates: (m.cr || []).map(c => ({ id: c[0], x: c[1], y: c[2], type: TT.WEAPONS[c[3]] })), mines: (m.mn || []).map(x => ({ x: x[1], y: x[2], state: x[3] })), beams: (m.bm || []).map(x => ({ kind: x[1] ? 'deathray' : 'laser', owner: x[2], life: x[3], pts: beamPts(me, x) })) };
+      if (me.beamPts.size > (m.bm || []).length) for (const id of me.beamPts.keys()) if (!(m.bm || []).some(x => x[0] === id)) me.beamPts.delete(id);
       me.snaps.push(snap); if (me.snaps.length > 40) me.snaps.shift();
       reconcile(me, m.ak, snap.tanks.get(me.you), now);
-      for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
+      if (m.sc) for (const [id, sc, tm] of m.sc) { const p = me.players.find(p => p.id === id); if (p) { p.score = sc; if (tm != null) p.team = tm; } }
       if (m.md != null) me.mode = m.md ? 'teams' : 'ffa'; if (m.ts) me.teamScore = m.ts;
       if (m.ev) for (const e of m.ev) me.pendingEv.push(Object.assign({ at: m.time }, e));
       me.dm = m.dm ? { left: m.dm[0], target: m.dm[1] } : null; me.phase = m.phase;
@@ -1427,6 +1470,8 @@ function openSocket(me, firstMsg) {
     }
   };
 }
+// a beam's path comes only in the first snapshot that has it (the server leaves it out after that)
+function beamPts(me, x) { if (x[4]) me.beamPts.set(x[0], x[4]); return me.beamPts.get(x[0]) || []; }
 function renderLobby() {
   if (!net) return;
   $('roomCode').textContent = net.code;
@@ -1489,15 +1534,18 @@ function reconcile(me, ak, mine, now) {
   e.x += old.x - p.x; e.y += old.y - p.y; e.a = TT.wrapA(e.a + old.a - p.a); // shown offset that fades out, so corrections don't jump
   if (Math.hypot(e.x, e.y) > 48) e.x = e.y = e.a = 0;
 }
-const INTERP_DELAY = 60;
 function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
+const EXTRAP_MS = 120;
 function onlineView(dt) {
   if (!net.maze || !net.snaps.length) return null;
-  const rt = performance.now() + net.offset - INTERP_DELAY, S = net.snaps;
-  let a = S[0], b = S[0];
-  if (rt >= S[S.length - 1].time) a = b = S[S.length - 1];
+  const rt = TT.clockRender(net.clock, performance.now(), dt * 1000), S = net.snaps;
+  if (rt == null) return null;
+  let a = S[0], b = S[0], ext = 0;
+  // past the newest snapshot (a late packet): keep moving along the last motion for a little while instead of freezing
+  if (rt >= S[S.length - 1].time) { b = S[S.length - 1]; a = S.length > 1 ? S[S.length - 2] : b; ext = Math.min(EXTRAP_MS, rt - b.time); }
   else for (let i = 0; i < S.length - 1; i++) if (S[i].time <= rt && S[i + 1].time >= rt) { a = S[i]; b = S[i + 1]; break; }
-  const t = b.time > a.time ? Math.min(1, Math.max(0, (rt - a.time) / (b.time - a.time))) : 1;
+  const span = b.time - a.time;
+  const t = ext ? (span > 0 ? 1 + ext / span : 1) : span > 0 ? Math.min(1, Math.max(0, (rt - a.time) / span)) : 1;
   const tanks = [];
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
@@ -1511,7 +1559,15 @@ function onlineView(dt) {
     e.x *= f; e.y *= f; e.a *= f;
   }
   const bullets = [];
-  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
+  for (const [id, bb] of b.bullets) {
+    const ba = a.bullets.get(id);
+    if (!ba) { if (t > 0.5) bullets.push(bb); continue; }
+    if (!ext) { bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); continue; }
+    // extrapolate with wall bounces (so a late packet doesn't push the bullet into a wall)
+    const p = { x: bb.x, y: bb.y, vx: (bb.x - ba.x) / span, vy: (bb.y - ba.y) / span, r: TT.KIND_R[bb.kind] };
+    if (net.rects && (p.vx || p.vy)) TT.moveBullet(p, Math.hypot(p.vx, p.vy) * ext, net.rects);
+    bullets.push({ x: p.x, y: p.y, kind: bb.kind, a: bb.a, tgt: bb.tgt });
+  }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
@@ -1525,18 +1581,21 @@ function beep(freq, dur, type = 'square', vol = 0.05, slide = 0) {
   if (!actx) return; const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
   o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+  return o;
 }
 function boom() {
   if (!actx) return; const len = actx.sampleRate * 0.5, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
   const s = actx.createBufferSource(), g = actx.createGain(); g.gain.value = 0.25; s.buffer = buf; s.connect(g).connect(actx.destination); s.start();
 }
+const spinSnd = {};
 function handleEvents(evs, tankOf) {
   for (const e of evs) {
     if (e.type === 'point' && e.team != null) { flash(`${TT.TEAM_NAMES[e.team]} team scores!`, 1800); beep(880, 0.15, 'triangle', 0.06, 1.3); }
     if (e.type === 'fire') beep(520, 0.07, 'square', 0.03, 0.5);
     else if (e.type === 'gat') beep(760, 0.04, 'square', 0.02, 0.6);
-    else if (e.type === 'spin') beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'spin') spinSnd[e.id] = beep(180, TT.W.GATLING_SPIN, 'sawtooth', 0.03, 4);
+    else if (e.type === 'spinstop') { try { spinSnd[e.id] && spinSnd[e.id].stop(); } catch (_) {} delete spinSnd[e.id]; }
     else if (e.type === 'shotgun') { beep(160, 0.18, 'square', 0.07, 0.4); beep(420, 0.08, 'sawtooth', 0.04, 0.5); }
     else if (e.type === 'laser') beep(1500, 0.25, 'sawtooth', 0.03, 0.3);
     else if (e.type === 'charge') beep(140, TT.W.RAY_CHARGE, 'sine', 0.05, 6);
@@ -1548,7 +1607,7 @@ function handleEvents(evs, tankOf) {
     else if (e.type === 'respawn') beep(440, 0.12, 'sine', 0.05, 2);
     else if (e.type === 'burst') {
       boom();
-      for (let i = 0; i < 16; i++) { const a = Math.random() * 6.283, s = 20 + Math.random() * 70; particles.push({ x: e.x, y: e.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.3 + Math.random() * 0.4, col: i % 2 ? '#777' : '#f7b733', r: 1.5 + Math.random() * 2.5 }); }
+      for (let i = 0; i < 7; i++) { const a = Math.random() * 6.283, s = 3 + Math.random() * 8; particles.push({ x: e.x + Math.cos(a) * 4, y: e.y + Math.sin(a) * 4, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.6 + Math.random() * 0.8, col: '#555', r: 5 + Math.random() * 4, grow: 3, alpha: 0.45, drag: 1 }); } // lingering smoke
     }
     else if (e.type === 'die') {
       boom();
@@ -1755,8 +1814,8 @@ function drawTurret(w, color, charge = 0) {
       disc(-1, 0, 6);
       break;
     }
-    case 'missile': // launcher tube with the missile nose poking out
-      ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke();
+    case 'missile': // launcher tube with the missile nose poking out (empty while the missile flies)
+      if (charge >= 0) { ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(15, -2.6); ctx.lineTo(21, 0); ctx.lineTo(15, 2.6); ctx.closePath(); ctx.fill(); ctx.stroke(); }
       box(-3, -4.5, 18, 9);
       ctx.fillStyle = DARK; ctx.fillRect(12.5, -3, 2.5, 6);
       ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(-3, 1.5, 18, 1.5);
@@ -1853,9 +1912,13 @@ function drawProjectile(b, colorOf) {
     ctx.fillStyle = '#222'; ctx.beginPath(); ctx.moveTo(3, -2.5); ctx.lineTo(7, 0); ctx.lineTo(3, 2.5); ctx.fill();
     ctx.restore(); return;
   }
-  ctx.fillStyle = k === 'frag' ? '#444' : '#222';
+  if (k === 'frag') { // little shard, random but stable orientation per piece
+    const a = (b.id || 0) * 2.399; ctx.fillStyle = '#222'; ctx.beginPath();
+    for (let i = 0; i < 3; i++) ctx.lineTo(b.x + Math.cos(a + i * 2.094) * 2.8, b.y + Math.sin(a + i * 2.094) * 2.8);
+    ctx.fill(); return;
+  }
+  ctx.fillStyle = '#222';
   ctx.beginPath(); ctx.arc(b.x, b.y, TT.KIND_R[k] || C.BULLET_R, 0, 6.283); ctx.fill();
-  if (k === 'bomb') { ctx.fillStyle = Math.sin(performance.now() / 70) > 0 ? '#f33' : '#600'; ctx.beginPath(); ctx.arc(b.x, b.y, 1.8, 0, 6.283); ctx.fill(); }
 }
 function render(view, dt) {
   const dpr = devicePixelRatio || 1;
@@ -1903,7 +1966,7 @@ function render(view, dt) {
     const blink = t.prot && Math.sin(performance.now() / 55) > 0; // spawn protection: blinking, shots pass through
     if (blink) { ctx.save(); ctx.globalAlpha = 0.3; }
     if (view.teams) teamRing(t.x, t.y, TEAM_COLORS[teamOfId(t.id)], 1);
-    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.charge);
+    drawTank(t.x, t.y, t.a, colorOf(t.id), 1, t.weapon, t.weapon === 'missile' && !t.ammo ? -1 : t.charge);
     if (blink) ctx.restore();
   }
   // projectiles
@@ -1921,8 +1984,8 @@ function render(view, dt) {
   // particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]; p.life -= dt; if (p.life <= 0) { particles.splice(i, 1); continue; }
-    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.93; p.vy *= 0.93;
-    ctx.globalAlpha = Math.min(1, p.life / 0.4); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+    p.x += p.vx * dt; p.y += p.vy * dt; if (!p.drag) { p.vx *= 0.93; p.vy *= 0.93; } if (p.grow) p.r += p.grow * dt;
+    ctx.globalAlpha = Math.min(1, p.life / 0.4) * (p.alpha || 1); ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
   }
   ctx.globalAlpha = 1; ctx.restore();
   if (view.dm) drawDmBar(view); else if (view.teams) drawTeamBar(view);
