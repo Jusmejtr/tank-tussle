@@ -510,7 +510,7 @@
       const rc = t.rcId && g.bullets.find(b => b.id === t.rcId);
       if (rc) { rc.steer = rot; rot = 0; mv = 0; }
       if (t.lock > 0) { t.lock -= dt; rot = 0; mv = 0; }
-      if (t.weapon === 'deathray' && t.charge > 0) mv = 0; // locked in place while charging (can still aim)
+      if (t.weapon === 'deathray' && t.charge > 0) { rot = 0; mv = 0; } // frozen while charging: no driving, no turning
       t.px = t.x; t.py = t.y;
       moveTank(t, rot, mv, dt, g.rects);
       t.cool -= dt;
@@ -627,9 +627,9 @@
     return {
       t: 's', time: Math.round(g.time * 1000), round: g.round, phase: g.phase,
       tk: Object.values(g.tanks).map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1000) / 1000, t.alive ? 1 : 0, t.weapon ? WEAPONS.indexOf(t.weapon) : -1, t.ammo, Math.round((t.firing ? 1 : t.charge) * 100) / 100, t.lock > 0 || (t.rcId && g.bullets.some(b => b.id === t.rcId)) ? 1 : 0, !t.alive && t.respawn > 0 ? Math.ceil(t.respawn * 10) / 10 : 0, t.prot > 0 ? 1 : 0]),
-      b: g.bullets.map(b => [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0]),
+      b: g.bullets.map(b => b.kind === 'missile' || b.kind === 'rc' ? [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind), Math.round(b.a * 100) / 100, b.tgt || 0] : [b.id, r1(b.x), r1(b.y), KINDS.indexOf(b.kind)]), // heading/target only matter for drawing missiles
       cr: g.crates.map(c => [c.id, c.x, c.y, WEAPONS.indexOf(c.type)]),
-      mn: g.mines.map(m => [m.id, r1(m.x), r1(m.y), mineState(m), m.owner]),
+      mn: g.mines.filter(m => mineState(m) !== 1).map(m => [m.id, r1(m.x), r1(m.y), mineState(m)]), // armed traps are invisible: never tell clients where they are
       bm: g.beams.map(b => [b.id, b.kind === 'laser' ? 0 : 1, b.owner, Math.round(b.life * 100) / 100, b.pts.map(p => [r1(p[0]), r1(p[1])])]),
       sc: g.players.map(p => [p.id, p.score, p.team]),
       md: g.mode === 'teams' ? 1 : 0, ts: g.teamScore,

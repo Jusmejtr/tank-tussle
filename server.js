@@ -4,6 +4,8 @@ const http = require('http'), fs = require('fs'), path = require('path'), crypto
 const { WebSocketServer } = require('ws');
 const TT = require('./public/game.js');
 const TTBots = require('./public/bots.js');
+const AntiCheat = require('./anticheat.js');
+const ANTICHEAT = process.env.TT_ANTICHEAT !== '0';
 
 const PORT = +process.env.PORT || 8090;
 const PUB = path.join(__dirname, 'public');
@@ -63,19 +65,24 @@ function removeMember(room, id) {
 
 function startGame(room) {
   stopGame(room);
-  const g = room.game = TT.createGame(); TT.setMode(g, room.mode);
+  const g = room.game = TT.createGame(); TT.setMode(g, room.mode); room.net = null;
   TT.setMatch(g, room.match, { target: room.target });
   for (const id of room.order) { const m = room.members.get(id); TT.addPlayer(g, { id, name: m.name, colorIndex: m.color, team: m.team }); if (m.bot) m.brain = TTBots.newBrain(m.level); }
   TT.newRound(g); g.events.length = 0; debugArm(g);
   broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room));
   let tick = 0, round = g.round, phase = g.phase;
   room.loop = setInterval(() => {
-    const inputs = {};
+    const inputs = {}, presses = {};
     for (const [id, m] of room.members) {
       if (m.bot) { if (!m.brain) m.brain = TTBots.newBrain(m.level); inputs[id] = TTBots.think(g, g.tanks[id], m.brain, TICK); }
-      else inputs[id] = m.connected ? m.input : {};
+      else { inputs[id] = m.connected ? m.input : {}; if (ANTICHEAT) presses[id] = AntiCheat.pressed(g, id, inputs[id]); }
     }
     TT.step(g, inputs, TICK);
+    const cheaters = [];
+    if (ANTICHEAT) for (const [id, m] of room.members) if (!m.bot) {
+      const v = AntiCheat.observe(m.ac || (m.ac = AntiCheat.tracker()), g, id, presses[id]);
+      if (v) cheaters.push([m, v]);
+    }
     for (const m of room.members.values()) if (m.seq) m.ticks++;
     const ev = g.events.splice(0);
     for (const e of ev) { const br = TT.botReaction(e, id => { const x = room.members.get(id); return !!(x && x.bot); }); if (br) setTimeout(() => react(room, br.id, br.r), 500); }
@@ -83,10 +90,33 @@ function startGame(room) {
     if (g.round !== round) { round = g.round; debugArm(g); broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room)); }
     if (++tick % SEND_EVERY === 0 || ev.some(e => e.type === 'die' || e.type === 'respawn' || e.type === 'over')) {
       const s = TT.snapshot(g); s.ev = ev.filter(e => e.type !== 'bounce' && e.type !== 'round');
-      s.ak = [...room.members.values()].filter(m => m.seq).map(m => [m.id, m.seq, m.ticks]); // last input seq + ticks it has been applied (client prediction)
-      broadcast(room, s);
+      slim(room, s);
+      // each client only gets its own last input seq + ticks it has been applied (client prediction), not everyone's
+      const base = JSON.stringify(s).slice(0, -1);
+      for (const m of room.members.values()) if (!m.bot) send(m.ws, m.seq ? `${base},"ak":[[${m.id},${m.seq},${m.ticks}]]}` : base + '}');
     }
+    for (const [m, v] of cheaters) kick(room, m, v);
   }, 1000 * TICK);
+}
+// Bandwidth: a beam's path is sent once (clients cache it by id); scores / mode / team totals only when they change.
+// room.net = null makes the next snapshot complete again (someone (re)joined).
+function slim(room, s) {
+  const n = room.net || (room.net = { beams: new Set(), sc: null }), live = new Set();
+  for (const b of s.bm) { live.add(b[0]); if (n.beams.has(b[0])) b.length = 4; }
+  n.beams = live;
+  const sc = JSON.stringify([s.sc, s.md, s.ts]);
+  if (sc === n.sc) { delete s.sc; delete s.md; delete s.ts; } else n.sc = sc;
+  if (s.win == null) delete s.win;
+}
+// Anti-cheat: drop a player whose shots look scripted (see anticheat.js). Their token dies with the slot, so no rejoin.
+function kick(room, mb, v) {
+  if (!room.members.has(mb.id)) return;
+  console.warn(`[anticheat] kicked "${mb.name}" from ${room.code}: ${Math.round(v.aligned * 100)}% on-target, ${Math.round(v.snap * 100)}% instant (last ${v.shots} shots)`);
+  const ws = mb.ws; mb.ws = null; // the close handler then ignores this socket
+  send(ws, { t: 'error', msg: 'You were removed from the room: automated aiming detected.' });
+  if (ws) setTimeout(() => { try { ws.close(); } catch {} }, 100);
+  removeMember(room, mb.id);
+  if (rooms.has(room.code)) broadcast(room, { t: 'kicked', id: mb.id, name: mb.name });
 }
 // Test hook: TT_DEBUG_WEAPONS=1 hands every tank a weapon at round start (used by the online weapon test)
 let debugN = 0;
@@ -100,7 +130,7 @@ wss.on('connection', ws => {
   let room = null, me = null;
   ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
   function attach(r, mb) {
-    room = r; me = mb; mb.ws = ws; mb.connected = true; clearTimeout(mb.dropTimer);
+    room = r; me = mb; mb.ws = ws; mb.connected = true; clearTimeout(mb.dropTimer); r.net = null;
     send(ws, { t: 'joined', code: r.code, you: mb.id, token: mb.token });
     broadcast(r, lobbyMsg(r));
     if (r.game) send(ws, mazeMsg(r));
