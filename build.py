@@ -1,7 +1,7 @@
 # Build outputs from public/ (the source, also what server.js serves):
 #  1. public/sw.js gets a fresh cache VERSION (hash of the app shell) so installed PWAs pick up updates
 #  2. tank-tussle.html: single-file game (works by double-click, file://) - no manifest/service worker, icons inlined
-import base64, hashlib, os, re, shutil
+import base64, hashlib, os, re
 
 SHELL = ['index.html', 'game.js', 'bots.js', 'client.js', 'manifest.webmanifest', 'config.js']
 ICONS = sorted(f for f in os.listdir('public/icons') if f.endswith(('.png', '.svg')) and f != 'icon-48.png')
