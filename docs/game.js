@@ -482,22 +482,29 @@
   // roughly facing it (within POINT_DRIVE). It stops turning within `step` (one frame of rotation), so no jitter.
   // Screen angles = world angles (y points down, -PI/2 = up).
   const POINT_DRIVE = 40 * Math.PI / 180;
-  // Online render clock. Each snapshot gives est = server time - local time; the least delayed packet of the last 4 s
-  // (max est) is the true offset, the spread (to the 2nd percentile) is the jitter. Render that far behind (plus a snapshot interval and a
-  // margin), and only drift towards a new target at +-8 % speed, so the view never jumps back or races ahead.
+  // Online render clock. Each snapshot gives est = server time - local time; the least delayed packet of the last few
+  // seconds (max est) is the true offset, max - est is how late a packet was. Render far enough behind to cover the
+  // usual lateness (plus a snapshot interval and a margin); rarer spikes are bridged by the client's short
+  // extrapolation, not by delaying everything for the worst packet. Playback runs at exactly real speed and only
+  // adjusts (a few % fast/slow) once it is clearly off target, so moving things never visibly speed up / slow down
+  // all the time, and the view never jumps back.
+  const CLOCK = { WINDOW: 8000, PCT: 0.9, MARGIN: 10, MIN: 50, MAX: 250, AHEAD: 5, BEHIND: 40, RATE: 0.03, DECAY: 0.003 };
   function clockSample(c, est, now) {
-    if (c.s && c.s.length && Math.abs(est - c.s[c.s.length - 1][1]) > 2000) { c.s = null; c.off = null; } // new game: server time restarted
+    if (c.s && c.s.length && Math.abs(est - c.s[c.s.length - 1][1]) > 2000) { c.s = null; c.off = null; c.delay = null; } // new game: server time restarted
     const s = c.s || (c.s = []); s.push([now, est]);
-    while (s.length > 1 && s[0][0] < now - 4000) s.shift();
-    const v = s.map(x => x[1]).sort((x, y) => x - y), max = v[v.length - 1], lo = v[Math.floor(v.length * 0.02)];
-    c.delay = Math.min(300, Math.max(50, 33 + (max - lo) + 15));
+    while (s.length > 1 && s[0][0] < now - CLOCK.WINDOW) s.shift();
+    const v = s.map(x => x[1]).sort((x, y) => x - y), max = v[v.length - 1], lo = v[Math.floor(v.length * (1 - CLOCK.PCT))];
+    const need = Math.min(CLOCK.MAX, Math.max(CLOCK.MIN, 33 + (max - lo) + CLOCK.MARGIN));
+    c.delay = c.delay == null || need > c.delay ? need : c.delay + (need - c.delay) * CLOCK.DECAY; // up at once, down slowly
     c.target = max - c.delay;
-    if (c.off == null || Math.abs(c.target - c.off) > 500) c.off = c.target;
+    if (c.off == null || Math.abs(c.target - c.off) > 500) { c.off = c.target; c.adj = false; }
   }
   function clockRender(c, now, dtMs) {
     if (c.off == null) return null;
-    const lim = 0.08 * Math.max(0, dtMs);
-    c.off += Math.max(-lim, Math.min(lim, c.target - c.off));
+    const d = c.target - c.off;
+    // too close to the newest data: slow down soon; merely more delayed than needed: only once it's clearly worth it
+    if (d < -CLOCK.AHEAD || d > CLOCK.BEHIND) c.adj = true; else if (Math.abs(d) < 2) c.adj = false;
+    if (c.adj) { const lim = CLOCK.RATE * Math.max(0, dtMs); c.off += Math.max(-lim, Math.min(lim, d)); }
     return now + c.off;
   }
 
@@ -656,5 +663,5 @@
     };
   }
 
-  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, clockSample, clockRender, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
+  return { DM, setMatch, isDM, safeSpawnCell, respawn, kill, C, W, REACTIONS, REACTION_NAMES, REACT_COOLDOWN, REACT_SHOW, tryReact, botReaction, FRIENDLY_FIRE, TEAM_COLORS, TEAM_NAMES, teamOf, sameTeam, balanceTeams, setMode, setTeam, COLORS, COLOR_NAMES, WEAPONS, WEAPON_NAMES, KINDS, KIND_R, genMaze, mazeRects, traceRay, deathRayPath, nextWaypoint, mineState, moveBullet, moveTank, stickKeys, STICK_AXIS, STICK_DEAD, pointKeys, POINT_DRIVE, CLOCK, clockSample, clockRender, wrapA, circleHitsRect, createGame, addPlayer, removePlayer, newRound, step, snapshot, spawnCrate, giveWeapon };
 });

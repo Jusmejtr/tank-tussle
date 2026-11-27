@@ -396,14 +396,17 @@ function reconcile(me, ak, mine, now) {
   if (Math.hypot(e.x, e.y) > 48) e.x = e.y = e.a = 0;
 }
 function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
+const EXTRAP_MS = 120;
 function onlineView(dt) {
   if (!net.maze || !net.snaps.length) return null;
   const rt = TT.clockRender(net.clock, performance.now(), dt * 1000), S = net.snaps;
   if (rt == null) return null;
-  let a = S[0], b = S[0];
-  if (rt >= S[S.length - 1].time) a = b = S[S.length - 1];
+  let a = S[0], b = S[0], ext = 0;
+  // past the newest snapshot (a late packet): keep moving along the last motion for a little while instead of freezing
+  if (rt >= S[S.length - 1].time) { b = S[S.length - 1]; a = S.length > 1 ? S[S.length - 2] : b; ext = Math.min(EXTRAP_MS, rt - b.time); }
   else for (let i = 0; i < S.length - 1; i++) if (S[i].time <= rt && S[i + 1].time >= rt) { a = S[i]; b = S[i + 1]; break; }
-  const t = b.time > a.time ? Math.min(1, Math.max(0, (rt - a.time) / (b.time - a.time))) : 1;
+  const span = b.time - a.time;
+  const t = ext ? (span > 0 ? 1 + ext / span : 1) : span > 0 ? Math.min(1, Math.max(0, (rt - a.time) / span)) : 1;
   const tanks = [];
   for (const [id, tb] of b.tanks) {
     const ta = a.tanks.get(id) || tb;
@@ -417,7 +420,15 @@ function onlineView(dt) {
     e.x *= f; e.y *= f; e.a *= f;
   }
   const bullets = [];
-  for (const [id, bb] of b.bullets) { const ba = a.bullets.get(id); if (ba) bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); else if (t > 0.5) bullets.push(bb); }
+  for (const [id, bb] of b.bullets) {
+    const ba = a.bullets.get(id);
+    if (!ba) { if (t > 0.5) bullets.push(bb); continue; }
+    if (!ext) { bullets.push({ x: ba.x + (bb.x - ba.x) * t, y: ba.y + (bb.y - ba.y) * t, kind: bb.kind, a: bb.a, tgt: bb.tgt }); continue; }
+    // extrapolate with wall bounces (so a late packet doesn't push the bullet into a wall)
+    const p = { x: bb.x, y: bb.y, vx: (bb.x - ba.x) / span, vy: (bb.y - ba.y) / span, r: TT.KIND_R[bb.kind] };
+    if (net.rects && (p.vx || p.vy)) TT.moveBullet(p, Math.hypot(p.vx, p.vy) * ext, net.rects);
+    bullets.push({ x: p.x, y: p.y, kind: bb.kind, a: bb.a, tgt: bb.tgt });
+  }
   const due = net.pendingEv.filter(e => e.at <= rt + 20); net.pendingEv = net.pendingEv.filter(e => e.at > rt + 20);
   handleEvents(due, id => tanks.find(x => x.id === id));
   return { maze: net.maze, tanks, bullets, crates: b.crates, mines: b.mines, beams: b.beams, players: net.players.map(p => ({ id: p.id, name: p.name, color: p.color, score: p.score, team: p.team, bot: p.bot, you: p.id === net.you })),
