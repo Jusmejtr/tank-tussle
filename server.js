@@ -71,7 +71,15 @@ function startGame(room) {
   TT.newRound(g); g.events.length = 0; debugArm(g);
   broadcast(room, lobbyMsg(room)); broadcast(room, mazeMsg(room));
   let tick = 0, round = g.round, phase = g.phase;
+  // setInterval runs a few % slow (and jitters); pace the simulation by the wall clock so game time = real time,
+  // which keeps the clients' interpolation clock steady. Catch up at most a few ticks after a stall.
+  let due = performance.now();
   room.loop = setInterval(() => {
+    const now = performance.now();
+    if (now - due > 100) due = now - 1000 * TICK;
+    for (let n = 0; due <= now && n < 4 && room.game === g; n++, due += 1000 * TICK) tickOnce();
+  }, 1000 * TICK / 2);
+  function tickOnce() {
     const inputs = {}, presses = {};
     for (const [id, m] of room.members) {
       if (m.bot) { if (!m.brain) m.brain = TTBots.newBrain(m.level); inputs[id] = TTBots.think(g, g.tanks[id], m.brain, TICK); }
@@ -80,8 +88,10 @@ function startGame(room) {
     TT.step(g, inputs, TICK);
     const cheaters = [];
     if (ANTICHEAT) for (const [id, m] of room.members) if (!m.bot) {
-      const v = AntiCheat.observe(m.ac || (m.ac = AntiCheat.tracker()), g, id, presses[id]);
+      const st = m.ac || (m.ac = AntiCheat.tracker()); st.rtt = m.ws ? m.ws.rtt : 0;
+      const v = AntiCheat.observe(st, g, id, inputs[id], presses[id]);
       if (v) cheaters.push([m, v]);
+      else if (st.tick % 1800 === 0) suspicious(room, m, st); // every 30 s: log players close to a limit
     }
     for (const m of room.members.values()) if (m.seq) m.ticks++;
     const ev = g.events.splice(0);
@@ -96,7 +106,7 @@ function startGame(room) {
       for (const m of room.members.values()) if (!m.bot) send(m.ws, m.seq ? `${base},"ak":[[${m.id},${m.seq},${m.ticks}]]}` : base + '}');
     }
     for (const [m, v] of cheaters) kick(room, m, v);
-  }, 1000 * TICK);
+  }
 }
 // Bandwidth: a beam's path is sent once (clients cache it by id); scores / mode / team totals only when they change.
 // room.net = null makes the next snapshot complete again (someone (re)joined).
@@ -108,12 +118,19 @@ function slim(room, s) {
   if (sc === n.sc) { delete s.sc; delete s.md; delete s.ts; } else n.sc = sc;
   if (s.win == null) delete s.win;
 }
-// Anti-cheat: drop a player whose shots look scripted (see anticheat.js). Their token dies with the slot, so no rejoin.
+// Anti-cheat (see anticheat.js): drop a player whose aim looks scripted or who floods the server (kick only, no ban).
+const pct = x => Math.round(x * 100) + '%';
+const acInfo = s => `openings ${s.opens}: ${pct(s.snap)} shot at once (chance ${pct(s.chance)}); stops ${s.stops}: ${pct(s.lock)} dead-on; ping ${Math.round(s.rtt)} ms`;
+function suspicious(room, mb, st) {
+  const s = AntiCheat.stats(st), A = AntiCheat.AC;
+  if ((s.opens >= 10 && s.snap >= A.MIN_SNAP * 0.7 && s.snap - s.chance >= A.MIN_EXCESS * 0.7) || (s.stops >= 20 && s.lock >= A.MIN_LOCK * 0.9))
+    console.warn(`[anticheat] suspicious "${mb.name}" in ${room.code}: ${acInfo(s)}`);
+}
 function kick(room, mb, v) {
   if (!room.members.has(mb.id)) return;
-  console.warn(`[anticheat] kicked "${mb.name}" from ${room.code}: ${Math.round(v.aligned * 100)}% on-target, ${Math.round(v.snap * 100)}% instant (last ${v.shots} shots)`);
+  console.warn(`[anticheat] kicked "${mb.name}" from ${room.code} for ${v.reason}: ${v.reason === 'flood' ? v.rate + ' msgs/s' : acInfo(v)}`);
   const ws = mb.ws; mb.ws = null; // the close handler then ignores this socket
-  send(ws, { t: 'error', msg: 'You were removed from the room: automated aiming detected.' });
+  send(ws, { t: 'error', msg: v.reason === 'flood' ? 'You were removed from the room: too many messages.' : 'You were removed from the room: automated aiming detected.' });
   if (ws) setTimeout(() => { try { ws.close(); } catch {} }, 100);
   removeMember(room, mb.id);
   if (rooms.has(room.code)) broadcast(room, { t: 'kicked', id: mb.id, name: mb.name });
@@ -128,7 +145,12 @@ function stopGame(room) { if (room.loop) clearInterval(room.loop); room.loop = n
 let nextId = 1;
 wss.on('connection', ws => {
   let room = null, me = null;
-  ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
+  const rate = AntiCheat.tracker();
+  ws.missed = 0; ws.rtts = []; ws.rtt = 0;
+  ws.on('pong', () => { // round trip (lowest of the last few) for the anti-cheat's reaction-time check
+    ws.missed = 0; if (!ws.pingAt) return;
+    ws.rtts.push(performance.now() - ws.pingAt); if (ws.rtts.length > 5) ws.rtts.shift(); ws.pingAt = 0; ws.rtt = Math.min(...ws.rtts);
+  });
   function attach(r, mb) {
     room = r; me = mb; mb.ws = ws; mb.connected = true; clearTimeout(mb.dropTimer); r.net = null;
     send(ws, { t: 'joined', code: r.code, you: mb.id, token: mb.token });
@@ -145,6 +167,7 @@ wss.on('connection', ws => {
   }
   const isHost = () => room && me && room.hostId === me.id;
   ws.on('message', raw => {
+    if (ANTICHEAT) { const v = AntiCheat.message(rate, Date.now()); if (v) { if (room && me) kick(room, me, v); else ws.terminate(); return; } }
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (m.t === 'input') { if (me) { const k = m.k || {}; me.input = { u: !!k.u, d: !!k.d, l: !!k.l, r: !!k.r, f: !!k.f }; if (m.s) { me.seq = m.s >>> 0; me.ticks = 0; } } return; }
     const newRoom = () => { const r = { code: newCode(), members: new Map(), order: [], hostId: null, game: null, loop: null, level: 'normal', mode: 'ffa', match: 'rounds', target: TT.DM.TARGET }; rooms.set(r.code, r); return r; };
@@ -201,6 +224,7 @@ wss.on('connection', ws => {
     mb.dropTimer = setTimeout(() => removeMember(r, mb.id), RECONNECT_GRACE_MS); // keep the slot for a reconnect
   });
 });
-setInterval(() => { for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; ws.ping(); } }, 20000);
+// ping every 2 s (measures the round trip); drop connections that missed 10 pongs in a row
+setInterval(() => { for (const ws of wss.clients) { if (++ws.missed > 10) { ws.terminate(); continue; } ws.pingAt = performance.now(); ws.ping(); } }, 2000);
 
 server.listen(PORT, () => console.log(`Tank Tussle server on http://localhost:${PORT} (WebSocket path /ws)`));
